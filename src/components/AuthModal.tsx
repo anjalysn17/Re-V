@@ -166,7 +166,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                     type="text"
                     value={identifier}
                     onChange={e => setIdentifier(e.target.value)}
-                    placeholder="Contoh: selly@students.unnes.ac.id atau Selly"
+                    placeholder="Contoh: anjalysn@students.unnes.ac.id atau Anjaly"
                     className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
                     style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
                   />
