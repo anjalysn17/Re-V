@@ -1,7 +1,12 @@
 {
-  "description": "This e-commerce and barter platform for UNNES students enables seamless product exchanges, secure transactions, and efficient communication between users.",
+  "title": "Re:V - Platform Jual Beli & Barter Mahasiswa",
+  "description": "Re:V adalah platform jual beli dan barter khusus mahasiswa UNNES. Tukar, jual, atau beli barang dengan mudah dan aman di kampus.",
+  "language": "id",
   "robots": {
-    "index": false
+    "index": true
+  },
+  "openGraph": {
+    "image": "https://re-v-five.vercel.app/og-image.jpg"
   },
   "accessibility": {
     "addBypassLinks": false,
