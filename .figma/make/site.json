@@ -1,0 +1,10 @@
+{
+  "description": "This e-commerce and barter platform for UNNES students enables seamless product exchanges, secure transactions, and efficient communication between users.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

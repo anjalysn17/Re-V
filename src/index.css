@@ -1,0 +1,57 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@1,500;1,600&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --color-primary: #567257;
+  --color-primary-light: #7a9b7b;
+  --color-primary-dark: #3e5540;
+  --color-accent: #e07b39;
+  --color-accent-light: #f0a06e;
+  --color-bg: #f3ebdd;
+  --color-card: #fffdf8;
+  --color-text: #2c2416;
+  --color-muted: #8b7355;
+  --color-border: #d4c8b5;
+  --color-success: #4a8c5c;
+  --color-warning: #c9852b;
+  --color-danger: #c0392b;
+  --font-display: Arial, Helvetica, sans-serif;
+  --font-body: Arial, Helvetica, sans-serif;
+}
+
+/* Base font Arial untuk seluruh elemen umum */
+*,
+*::before,
+*::after {
+  font-family: Arial, Helvetica, sans-serif;
+  scrollbar-width: thin;
+  scrollbar-color: #d4c8b5 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #d4c8b5;
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Class khusus tipografi editorial ala Relove */
+.font-editorial {
+  font-family: 'Playfair Display', Georgia, serif !important;
+  font-style: italic !important;
+}
