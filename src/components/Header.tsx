@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getDB } from '../services/db';
+import { APP_NAME, APP_LOGO_LETTER } from '../constants/brand';
 
 interface HeaderProps {
   activePage: string;
@@ -48,11 +49,11 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
         {/* Logo  */}
         <button
           onClick={() => onNavigate('home')}
-          title="Re:V Beranda"
+          title={`${APP_NAME} Beranda`}
           className="w-10 h-10 rounded-xl flex items-center justify-center text-xl font-black shadow-sm shrink-0 hover:opacity-90 transition-transform active:scale-95"
           style={{ background: 'var(--color-bg)', color: 'var(--color-primary)' }}
         >
-          R
+          {APP_LOGO_LETTER}
         </button>
 
         {/* Tombol Beranda  */}

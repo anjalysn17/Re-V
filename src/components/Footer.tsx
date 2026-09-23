@@ -1,3 +1,5 @@
+import { APP_NAME } from '../constants/brand';
+
 export default function Footer() {
   return (
     <footer className="w-full border-t border-gray-200 mt-16 text-gray-600 text-xs">
@@ -11,14 +13,14 @@ export default function Footer() {
             <li><a href="#" className="hover:text-[var(--color-primary)]">Pusat Bantuan</a></li>
             <li><a href="#" className="hover:text-[var(--color-primary)]">Cara Jual & Barter</a></li>
             <li><a href="#" className="hover:text-[var(--color-primary)]">Metode COD</a></li>
-            <li><a href="#" className="hover:text-[var(--color-primary)]">Garansi Aman Re:V</a></li>
+            <li><a href="#" className="hover:text-[var(--color-primary)]">Garansi Aman {APP_NAME}</a></li>
             <li><a href="#" className="hover:text-[var(--color-primary)]">Hubungi Kami</a></li>
           </ul>
         </div>
 
-        {/* Kolom 2: Tentang UniSwap */}
+        {/* Kolom 2: Tentang {APP_NAME} */}
         <div>
-          <h4 className="font-bold text-gray-800 text-[13px] mb-4 tracking-wider">TENTANG Re:V</h4>
+          <h4 className="font-bold text-gray-800 text-[13px] mb-4 tracking-wider">TENTANG {APP_NAME.toUpperCase()}</h4>
           <ul className="space-y-2">
             <li><a href="#" className="hover:text-[var(--color-primary)]">Tentang Kami</a></li>
             <li><a href="#" className="hover:text-[var(--color-primary)]">Komunitas Kampus</a></li>
@@ -55,7 +57,7 @@ export default function Footer() {
 
       {/* Baris Hak Cipta Bawah */}
       <div className="border-t border-gray-200 py-6 text-center text-gray-500 text-[11px]">
-        <p>© 2026 Re:V. Platform Jual Beli & Barter Berang Bekas.</p>
+        <p>© 2026 {APP_NAME}. Platform Jual Beli & Barter Barang Bekas.</p>
         <p className="mt-1 text-gray-400">Gunungpati, Kota Semarang, Jawa Tengah</p>
       </div>
     </footer>

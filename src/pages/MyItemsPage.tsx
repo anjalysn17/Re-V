@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getDB } from '../services/db';
 import { Item } from '../types/database';
+import { APP_NAME } from '../constants/brand';
 
 interface MyItemsPageProps {
   onNavigate: (page: string, params?: any) => void;
@@ -57,7 +58,7 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
             Barang Saya
           </h1>
           <p className="text-xs text-gray-500 mt-1">
-            Daftar barang yang kamu iklankan di UniSwap ({items.length} barang)
+            Daftar barang yang kamu iklankan di {APP_NAME} ({items.length} barang)
           </p>
         </div>
 

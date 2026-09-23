@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { getDB, saveDB, generateId } from '../services/db';
 import { Item, User, Offer, Conversation, Message, Notification } from '../types/database';
 import { createOfferAndConversation, getOrCreateConversation } from '../utils/barterActions';
+import { APP_NAME } from '../constants/brand';
 
 interface SmartBarterProps {
   onNavigate: (page: string, param?: string | any, conversationId?: string) => void;
@@ -122,7 +123,7 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
     const results: MatchResultItem[] = otherItems.map(item => {
       const owner = currentDB.users.find(u => u.id === item.id_pemilik) || {
         id: item.id_pemilik,
-        nama: 'Pengguna Barterin',
+        nama: `Pengguna ${APP_NAME}`,
         email: '',
         password: '',
         foto_profil: '/assets/seed-images/avatar-placeholder.svg',

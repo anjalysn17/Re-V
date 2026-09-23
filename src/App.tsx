@@ -63,7 +63,7 @@ function MainLayout() {
   };
 
   useEffect(() => {
-    (window as any).barterinNavigate = navigate;
+    (window as any).revNavigate = navigate;
   }, []);
 
   const cartCount = currentUser

@@ -43,7 +43,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
         {/* Headline Pas 2 Baris */}
         <h1 className="text-2xl md:text-3xl lg:text-4xl font-black text-white leading-snug tracking-tight max-w-2xl">
           Bingung Mau Dikemanain? <br />
-          Barterin ke Teman Kampus Aja
+          Barter ke Teman Kampus Aja
         </h1>
 
         {/* Tombol Aksi */}

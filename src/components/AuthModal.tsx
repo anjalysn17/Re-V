@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { APP_NAME, APP_LOGO_LETTER } from '../constants/brand';
 
 interface AuthModalProps {
   onLoginSuccess?: (role: 'user' | 'admin') => void;
@@ -101,10 +102,10 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
               className="w-7 h-7 rounded-lg flex items-center justify-center font-black text-sm"
               style={{ background: 'var(--color-bg)', color: 'var(--color-primary)' }}
             >
-              U
+              {APP_LOGO_LETTER}
             </span>
             <h3 className="font-bold text-white text-base">
-              {authModalMode === 'login' ? 'Masuk ke UniSwap' : 'Daftar Akun Baru'}
+              {authModalMode === 'login' ? `Masuk ke ${APP_NAME}` : 'Daftar Akun Baru'}
             </h3>
           </div>
           <button

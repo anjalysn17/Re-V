@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getDB, saveDB, generateId } from '../services/db';
 import { Message, User, Item } from '../types/database';
+import { APP_NAME } from '../constants/brand';
 
 interface ChatPageProps {
   openConversationId?: string;
@@ -67,7 +68,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
       const otherUserId = c.id_user_a === currentUser.id ? c.id_user_b : c.id_user_a;
       const otherUser = db.users.find(u => u.id === otherUserId) || {
         id: otherUserId,
-        nama: 'Pengguna Barterin',
+        nama: `Pengguna ${APP_NAME}`,
         email: '',
         password: '',
         foto_profil: '/assets/seed-images/avatar-placeholder.svg',

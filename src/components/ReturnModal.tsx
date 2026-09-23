@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { APP_NAME } from '../constants/brand';
 
 interface Props {
   onClose: () => void;
@@ -48,7 +49,7 @@ export default function ({ onClose }: Props) {
             Nomor Klaim: <span className="font-bold" style={{ color: 'var(--color-text)' }}>#RTR-2024-0892</span>
           </p>
           <p className="text-sm leading-relaxed mb-6" style={{ color: 'var(--color-muted)' }}>
-            Tim UniSwap akan meninjau klaimmu dalam 1×24 jam. Kamu akan dihubungi melalui chat untuk jadwal mediasi di kampus.
+            Tim {APP_NAME} akan meninjau klaimmu dalam 1×24 jam. Kamu akan dihubungi melalui chat untuk jadwal mediasi di kampus.
           </p>
           <button onClick={onClose}
             className="w-full py-3 rounded-xl font-bold text-white"
@@ -223,7 +224,7 @@ export default function ({ onClose }: Props) {
           {step === 3 && (
             <div className="space-y-3">
               <p className="text-sm" style={{ color: 'var(--color-muted)' }}>
-                Pilih lokasi mediasi retur di dalam kampus. Tim UniSwap akan hadir sebagai penengah.
+                Pilih lokasi mediasi retur di dalam kampus. Tim {APP_NAME} akan hadir sebagai penengah.
               </p>
               <div className="space-y-2">
                 {mediationPoints.map(pt => (
@@ -255,7 +256,7 @@ export default function ({ onClose }: Props) {
               <div className="p-3 rounded-xl text-xs" style={{ background: '#e8f4ea', border: '1px solid #4a8c5c30' }}>
                 <p className="font-semibold" style={{ color: '#4a8c5c' }}>🛡️ Jaminan Proses Mediasi</p>
                 <p className="mt-1" style={{ color: 'var(--color-text)' }}>
-                  Uang/barang akan ditahan oleh sistem escrow UniSwap hingga mediasi selesai. Keputusan mediator UniSwap bersifat final dan mengikat.
+                  Uang/barang akan ditahan oleh sistem escrow {APP_NAME} hingga mediasi selesai. Keputusan mediator {APP_NAME} bersifat final dan mengikat.
                 </p>
               </div>
             </div>

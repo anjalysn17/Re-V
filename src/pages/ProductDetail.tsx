@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { getDB, saveDB, generateId } from '../services/db';
 import { Item, User } from '../types/database';
 import { createOfferAndConversation, getOrCreateConversation } from '../utils/barterActions';
+import { APP_NAME } from '../constants/brand';
 
 interface ProductDetailProps {
   productId?: string;
@@ -64,7 +65,7 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
   }
 
   // Fallback informasi penjual
-  const sellerName = seller?.nama || 'Pengguna Barterin';
+  const sellerName = seller?.nama || `Pengguna ${APP_NAME}`;
   const sellerPhoto = seller?.foto_profil || '/assets/seed-images/avatar-placeholder.svg';
   const sellerRating = seller?.rating ?? 4.8;
   const sellerLocation = seller?.lokasi || item.lokasi;
