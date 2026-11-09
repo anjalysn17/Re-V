@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import ProfilePage from './pages/ProfilePage';
+import OrdersPage from './pages/OrdersPage';
 import Header from './components/Header';
 import HomePage from './pages/HomePage';
 import ProductDetail from './pages/ProductDetail';
@@ -113,6 +115,8 @@ function MainLayout() {
             onCartUpdated={handleCartUpdated}
           />
         )}
+        {page === 'profile' && <ProfilePage />}
+        {page === 'orders' && <OrdersPage />}
         {page === 'barter' && (
           <SmartBarter
             onNavigate={navigate}
