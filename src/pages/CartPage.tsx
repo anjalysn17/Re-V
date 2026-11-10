@@ -1,8 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getDB, saveDB } from '../services/db';
-import { Item } from '../types/database';
-import { createOfferAndConversation } from '../utils/barterActions';
+import { itemService, barterService, getDB, saveDB } from '../services/db';
 import Footer from '../components/Footer';
 
 interface CartPageProps {
@@ -12,11 +10,37 @@ interface CartPageProps {
 
 export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
   const { currentUser, openAuthModal } = useAuth();
-  const [barterTargetItem, setBarterTargetItem] = useState<Item | null>(null);
+  const [items, setItems] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [cartItems, setCartItems] = useState<any[]>([]);
+
+  const [barterTargetItem, setBarterTargetItem] = useState<any | null>(null);
   const [selectedMyItemId, setSelectedMyItemId] = useState<string>('');
   const [isSubmittingOffer, setIsSubmittingOffer] = useState(false);
+  const [toastMsg, setToastMsg] = useState('');
 
-  // Jika belum login, tampilkan state Perlu Masuk Akun
+  // Fetch items and cart on mount
+  useEffect(() => {
+    const fetchData = async () => {
+      setIsLoading(true);
+      try {
+        const allItems = await itemService.getAllItems();
+        setItems(allItems || []);
+
+        if (currentUser) {
+          const db = getDB();
+          const userCart = (db.cart || []).filter((c: any) => c.id_user === currentUser.id);
+          setCartItems(userCart);
+        }
+      } catch (error) {
+        console.error("Gagal memuat data keranjang:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchData();
+  }, [currentUser]);
+
   if (!currentUser) {
     return (
       <div className="max-w-screen-xl mx-auto px-4 py-16 text-center">
@@ -43,12 +67,9 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
     );
   }
 
-  const db = getDB();
-  const userCart = (db.cart || []).filter(c => c.id_user === currentUser.id);
-
-  // Map item keranjang dengan item aktual
-  const cartEntries = userCart.map(c => {
-    const item = db.items.find(i => i.id === c.id_item);
+  // Map item keranjang dengan item aktual dari backend
+  const cartEntries = cartItems.map(c => {
+    const item = items.find(i => i.id === c.id_item);
     return {
       cartId: c.id,
       addedAt: c.ditambahkan_pada,
@@ -58,35 +79,51 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
   });
 
   const handleRemoveFromCart = (cartId: string) => {
-    const currentDB = getDB();
-    currentDB.cart = (currentDB.cart || []).filter(c => c.id !== cartId);
-    saveDB(currentDB);
+    const db = getDB();
+    db.cart = (db.cart || []).filter((c: any) => c.id !== cartId);
+    saveDB(db);
+    setCartItems([...db.cart.filter((c: any) => c.id_user === currentUser.id)]);
     if (onCartUpdated) {
       onCartUpdated();
     }
   };
 
-  // Barang milik user untuk modal barter
-  const myItems = db.items.filter(
+  // Barang milik user untuk modal barter (dari backend items)
+  const myItems = items.filter(
     i => i.id_pemilik === currentUser.id && (i.status === 'barter' || i.status === 'keduanya')
   );
 
-  const handleSendBarterOffer = () => {
+  const handleSendBarterOffer = async () => {
     if (!barterTargetItem || !selectedMyItemId) return;
     const myItem = myItems.find(i => i.id === selectedMyItemId);
     if (!myItem) return;
 
     setIsSubmittingOffer(true);
     try {
-      const res = createOfferAndConversation({
-        myItem,
-        targetItem: barterTargetItem,
-        currentUser,
-      });
-      setBarterTargetItem(null);
-      setSelectedMyItemId('');
-      if (onCartUpdated) onCartUpdated();
-      onNavigate('chat', { conversationId: res.convId });
+      const offerData = {
+        item_ditawarkan: myItem.id,
+        item_diminta: barterTargetItem.id,
+        id_pengirim: currentUser.id,
+        id_penerima: barterTargetItem.id_pemilik,
+        selisih_harga: (myItem.harga || 0) - (barterTargetItem.harga || 0),
+      };
+
+      const result = await barterService.createOffer(offerData);
+      if (result.success) {
+        setBarterTargetItem(null);
+        setSelectedMyItemId('');
+        setToastMsg('✓ Tawaran barter berhasil dikirim!');
+        setTimeout(() => setToastMsg(''), 3000);
+        if (onCartUpdated) onCartUpdated();
+        onNavigate('chat', { targetUserId: barterTargetItem.id_pemilik, targetItemId: barterTargetItem.id });
+      } else {
+        setToastMsg(result.message || 'Gagal mengirim tawaran.');
+        setTimeout(() => setToastMsg(''), 3000);
+      }
+    } catch (error) {
+      console.error(error);
+      setToastMsg('Terjadi kesalahan jaringan.');
+      setTimeout(() => setToastMsg(''), 3000);
     } finally {
       setIsSubmittingOffer(false);
     }
@@ -94,6 +131,16 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
 
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-6 space-y-6">
+      {/* Toast Notifikasi */}
+      {toastMsg && (
+        <div
+          className="fixed top-6 right-6 z-50 px-4 py-3 rounded-2xl text-xs font-bold text-white shadow-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-4"
+          style={{ background: 'var(--color-success, #4a8c5c)' }}
+        >
+          <span>{toastMsg}</span>
+        </div>
+      )}
+
       {/* Breadcrumb */}
       <nav className="flex items-center gap-2 text-xs text-gray-500">
         <button
@@ -134,7 +181,9 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
       </div>
 
       {/* Konten Keranjang */}
-      {cartEntries.length === 0 ? (
+      {isLoading ? (
+        <div className="p-16 text-center text-gray-500 text-sm">Memuat keranjang dari server...</div>
+      ) : cartEntries.length === 0 ? (
         <div
           className="p-12 md:p-16 rounded-2xl border text-center space-y-4 my-6"
           style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
@@ -168,7 +217,7 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
         </div>
       ) : (
         <div className="space-y-3">
-          {cartEntries.map(({ cartId, addedAt, item, itemId }) => {
+          {cartEntries.map(({ cartId, addedAt, item }) => {
             if (!item) {
               return (
                 <div
@@ -197,20 +246,22 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
               );
             }
 
+            const itemName = item.nama_barang || item.nama;
             const canBarter = item.status === 'barter' || item.status === 'keduanya';
+            const conditionText = item.kondisi || 'Grade A';
 
             return (
               <div
                 key={cartId}
-                className="p-4 md:p-5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all hover:shadow-xs"
-                style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
+                className="p-4 md:p-5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all hover:shadow-xs bg-white"
+                style={{ borderColor: 'var(--color-border)' }}
               >
                 {/* Info Produk */}
                 <div className="flex items-center gap-4 min-w-0">
                   <div className="w-20 h-20 rounded-xl overflow-hidden bg-gray-100 shrink-0 border border-gray-100 relative">
                     <img
                       src={item.foto}
-                      alt={item.nama}
+                      alt={itemName}
                       className="w-full h-full object-cover"
                       onError={e => {
                         (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
@@ -220,7 +271,7 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                       className="absolute top-1 left-1 px-1.5 py-0.2 rounded text-[9px] font-bold text-white shadow-xs"
                       style={{ background: 'var(--color-primary)' }}
                     >
-                      {item.kondisi.split(' ')[0]}
+                      {conditionText.split(' ')[0]}
                     </span>
                   </div>
 
@@ -238,14 +289,14 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                       onClick={() => onNavigate('product', { productId: item.id })}
                       className="text-sm md:text-base font-bold text-gray-900 leading-snug truncate hover:underline cursor-pointer"
                     >
-                      {item.nama}
+                      {itemName}
                     </h3>
 
                     <p
                       className="text-sm font-black"
                       style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-display)' }}
                     >
-                      Rp {item.harga.toLocaleString('id-ID')}
+                      Rp {Number(item.harga).toLocaleString('id-ID')}
                     </p>
 
                     <p className="text-[11px] text-gray-400 flex items-center gap-1">
@@ -256,7 +307,7 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                           clipRule="evenodd"
                         />
                       </svg>
-                      <span>{item.lokasi}</span>
+                      <span>{item.lokasi || 'Sekaran, Gunungpati'}</span>
                     </p>
                   </div>
                 </div>
@@ -327,16 +378,18 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
             <div className="p-3 rounded-xl bg-gray-50 border border-gray-200 flex items-center gap-3">
               <img
                 src={barterTargetItem.foto}
-                alt={barterTargetItem.nama}
+                alt={barterTargetItem.nama_barang || barterTargetItem.nama}
                 className="w-12 h-12 rounded-lg object-cover"
                 onError={e => {
                   (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
                 }}
               />
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-bold text-gray-900 truncate">{barterTargetItem.nama}</p>
+                <p className="text-xs font-bold text-gray-900 truncate">
+                  {barterTargetItem.nama_barang || barterTargetItem.nama}
+                </p>
                 <p className="text-xs font-semibold text-emerald-700">
-                  Rp {barterTargetItem.harga.toLocaleString('id-ID')}
+                  Rp {Number(barterTargetItem.harga).toLocaleString('id-ID')}
                 </p>
               </div>
             </div>
@@ -355,9 +408,9 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                   <button
                     onClick={() => {
                       setBarterTargetItem(null);
-                      onNavigate('my-items');
+                      onNavigate('profile');
                     }}
-                    className="text-xs font-bold underline"
+                    className="text-xs font-bold underline cursor-pointer"
                     style={{ color: 'var(--color-primary)' }}
                   >
                     Atur Barang Saya →
@@ -365,42 +418,45 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                 </div>
               ) : (
                 <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {myItems.map(myItem => (
-                    <button
-                      type="button"
-                      key={myItem.id}
-                      onClick={() => setSelectedMyItemId(myItem.id)}
-                      className={`w-full p-3 rounded-xl border text-left flex items-center justify-between gap-3 transition-all cursor-pointer ${
-                        selectedMyItemId === myItem.id
-                          ? 'border-emerald-600 bg-emerald-50/60 ring-2 ring-emerald-500/20'
-                          : 'border-gray-200 hover:border-gray-300 bg-white'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <img
-                          src={myItem.foto}
-                          alt={myItem.nama}
-                          className="w-10 h-10 rounded-lg object-cover"
-                          onError={e => {
-                            (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
-                          }}
-                        />
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold text-gray-900 truncate">{myItem.nama}</p>
-                          <p className="text-[11px] text-gray-500">
-                            Rp {myItem.harga.toLocaleString('id-ID')} • {myItem.kondisi}
-                          </p>
+                  {myItems.map(myItem => {
+                    const myItemName = myItem.nama_barang || myItem.nama;
+                    return (
+                      <button
+                        type="button"
+                        key={myItem.id}
+                        onClick={() => setSelectedMyItemId(myItem.id)}
+                        className={`w-full p-3 rounded-xl border text-left flex items-center justify-between gap-3 transition-all cursor-pointer ${
+                          selectedMyItemId === myItem.id
+                            ? 'border-emerald-600 bg-emerald-50/60 ring-2 ring-emerald-500/20'
+                            : 'border-gray-200 hover:border-gray-300 bg-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <img
+                            src={myItem.foto}
+                            alt={myItemName}
+                            className="w-10 h-10 rounded-lg object-cover"
+                            onError={e => {
+                              (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
+                            }}
+                          />
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-gray-900 truncate">{myItemName}</p>
+                            <p className="text-[11px] text-gray-500">
+                              Rp {Number(myItem.harga).toLocaleString('id-ID')} • {myItem.kondisi}
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                      <div className="shrink-0">
-                        {selectedMyItemId === myItem.id && (
-                          <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">
-                            ✓
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
+                        <div className="shrink-0">
+                          {selectedMyItemId === myItem.id && (
+                            <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">
+                              ✓
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>

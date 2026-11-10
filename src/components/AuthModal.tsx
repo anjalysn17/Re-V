@@ -26,56 +26,76 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
   const [regPassword, setRegPassword] = useState('');
 
   const [errorMsg, setErrorMsg] = useState('');
+  const [isLoading, setIsLoading] = useState(false); // Tambahan state loading
 
   if (!isAuthModalOpen) return null;
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+    
     if (!identifier.trim() || !password) {
       setErrorMsg('Harap isi email/nama dan password.');
       return;
     }
 
-    const res = login(identifier, password);
-    if (!res.success) {
-      setErrorMsg(res.message || 'Gagal masuk.');
-    } else {
-      setIdentifier('');
-      setPassword('');
-      setErrorMsg('');
-      if (res.user?.role === 'admin') {
-        onLoginSuccess?.('admin');
+    setIsLoading(true);
+    try {
+      // Tunggu respon API via fungsi login() di context
+      const res = await login(identifier, password);
+      
+      if (!res.success) {
+        setErrorMsg(res.message || 'Gagal masuk.');
       } else {
-        onLoginSuccess?.('user');
+        setIdentifier('');
+        setPassword('');
+        setErrorMsg('');
+        if (res.user?.role === 'admin') {
+          onLoginSuccess?.('admin');
+        } else {
+          onLoginSuccess?.('user');
+        }
       }
+    } catch (error) {
+      setErrorMsg('Terjadi kesalahan. Silakan coba lagi.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+    
     if (!regNama.trim() || !regEmail.trim() || !regPassword) {
       setErrorMsg('Nama, email, dan password wajib diisi.');
       return;
     }
 
-    const res = register({
-      nama: regNama,
-      email: regEmail,
-      lokasi: regLokasi,
-      password: regPassword,
-    });
+    setIsLoading(true);
+    try {
+      // Tunggu respon API via fungsi register() di context
+      const res = await register({
+        nama: regNama,
+        email: regEmail,
+        lokasi: regLokasi,
+        password: regPassword,
+      });
 
-    if (!res.success) {
-      setErrorMsg(res.message || 'Gagal mendaftar.');
-    } else {
-      setRegNama('');
-      setRegEmail('');
-      setRegLokasi('');
-      setRegPassword('');
-      setErrorMsg('');
-      onLoginSuccess?.('user');
+      if (!res.success) {
+        setErrorMsg(res.message || 'Gagal mendaftar.');
+      } else {
+        setRegNama('');
+        setRegEmail('');
+        setRegLokasi('');
+        setRegPassword('');
+        setErrorMsg('');
+        onLoginSuccess?.('user');
+      }
+    } catch (error) {
+      setErrorMsg('Terjadi kesalahan jaringan. Silakan coba lagi.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -111,6 +131,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
           <button
             onClick={closeAuthModal}
             className="text-white/80 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10"
+            disabled={isLoading}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -122,27 +143,33 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
         <div className="flex border-b text-xs font-semibold" style={{ borderColor: 'var(--color-border)' }}>
           <button
             onClick={() => {
-              openAuthModal('login');
-              setErrorMsg('');
+              if (!isLoading) {
+                openAuthModal('login');
+                setErrorMsg('');
+              }
             }}
+            disabled={isLoading}
             className={`flex-1 py-3 text-center transition-colors border-b-2 ${
               authModalMode === 'login'
                 ? 'border-[var(--color-accent)] text-[var(--color-accent)] font-bold'
                 : 'border-transparent text-gray-500 hover:text-gray-800'
-            }`}
+            } ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             Masuk
           </button>
           <button
             onClick={() => {
-              openAuthModal('register');
-              setErrorMsg('');
+              if (!isLoading) {
+                openAuthModal('register');
+                setErrorMsg('');
+              }
             }}
+            disabled={isLoading}
             className={`flex-1 py-3 text-center transition-colors border-b-2 ${
               authModalMode === 'register'
                 ? 'border-[var(--color-accent)] text-[var(--color-accent)] font-bold'
                 : 'border-transparent text-gray-500 hover:text-gray-800'
-            }`}
+            } ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             Daftar Akun
           </button>
@@ -157,43 +184,48 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
           )}
 
           {authModalMode === 'login' ? (
-            <>
-              <form onSubmit={handleLoginSubmit} className="space-y-3.5">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">
-                    Email Kampus / Nama Akun
-                  </label>
-                  <input
-                    type="text"
-                    value={identifier}
-                    onChange={e => setIdentifier(e.target.value)}
-                    placeholder="Contoh: anjalysn@students.unnes.ac.id atau Anjaly"
-                    className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
-                    style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
-                  />
-                </div>
+            <form onSubmit={handleLoginSubmit} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Email Kampus / Nama Akun
+                </label>
+                <input
+                  type="text"
+                  value={identifier}
+                  onChange={e => setIdentifier(e.target.value)}
+                  placeholder="Contoh: haikal@students.unnes.ac.id atau Haikal"
+                  disabled={isLoading}
+                  className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] disabled:opacity-50"
+                  style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
+                />
+              </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Password</label>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    placeholder="Password akun"
-                    className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
-                    style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
-                  />
-                </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="Password akun"
+                  disabled={isLoading}
+                  className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] disabled:opacity-50"
+                  style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
+                />
+              </div>
 
-                <button
-                  type="submit"
-                  className="w-full py-2.5 rounded-xl text-white font-bold text-sm shadow-sm transition-all hover:opacity-90 active:scale-[0.99] mt-2"
-                  style={{ background: 'var(--color-accent)' }}
-                >
-                  Masuk Sekarang
-                </button>
-              </form>
-            </>
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full py-2.5 rounded-xl text-white font-bold text-sm shadow-sm transition-all hover:opacity-90 active:scale-[0.99] mt-2 flex justify-center items-center disabled:opacity-70 disabled:cursor-not-allowed"
+                style={{ background: 'var(--color-accent)' }}
+              >
+                {isLoading ? (
+                  <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                ) : (
+                  'Masuk Sekarang'
+                )}
+              </button>
+            </form>
           ) : (
             <form onSubmit={handleRegisterSubmit} className="space-y-3">
               <div>
@@ -202,8 +234,9 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                   type="text"
                   value={regNama}
                   onChange={e => setRegNama(e.target.value)}
-                  placeholder="Contoh: Budi Santoso"
-                  className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
+                  placeholder="Contoh: Haikal Akhsan"
+                  disabled={isLoading}
+                  className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] disabled:opacity-50"
                   style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
                 />
               </div>
@@ -214,8 +247,9 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                   type="email"
                   value={regEmail}
                   onChange={e => setRegEmail(e.target.value)}
-                  placeholder="budi@students.unnes.ac.id"
-                  className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
+                  placeholder="haikal@students.unnes.ac.id"
+                  disabled={isLoading}
+                  className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] disabled:opacity-50"
                   style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
                 />
               </div>
@@ -227,7 +261,8 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                   value={regLokasi}
                   onChange={e => setRegLokasi(e.target.value)}
                   placeholder="Contoh: Sekaran, Banaran, atau Patemon"
-                  className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
+                  disabled={isLoading}
+                  className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] disabled:opacity-50"
                   style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
                 />
               </div>
@@ -239,17 +274,23 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                   value={regPassword}
                   onChange={e => setRegPassword(e.target.value)}
                   placeholder="Buat password akun"
-                  className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
+                  disabled={isLoading}
+                  className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] disabled:opacity-50"
                   style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
                 />
               </div>
 
               <button
                 type="submit"
-                className="w-full py-2.5 rounded-xl text-white font-bold text-sm shadow-sm transition-all hover:opacity-90 active:scale-[0.99] mt-2"
+                disabled={isLoading}
+                className="w-full py-2.5 rounded-xl text-white font-bold text-sm shadow-sm transition-all hover:opacity-90 active:scale-[0.99] mt-2 flex justify-center items-center disabled:opacity-70 disabled:cursor-not-allowed"
                 style={{ background: 'var(--color-primary)' }}
               >
-                Daftar & Masuk
+                {isLoading ? (
+                  <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                ) : (
+                  'Daftar & Masuk'
+                )}
               </button>
             </form>
           )}

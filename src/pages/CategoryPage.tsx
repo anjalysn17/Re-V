@@ -1,5 +1,6 @@
+import { useState, useEffect } from 'react';
 import Footer from '../components/Footer';
-import { getDB } from '../services/db';
+import { itemService } from '../services/db';
 
 interface CategoryPageProps {
   category: string;
@@ -7,19 +8,36 @@ interface CategoryPageProps {
 }
 
 export default function CategoryPage({ category, onNavigate }: CategoryPageProps) {
-  const db = getDB();
+  const [items, setItems] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchItems = async () => {
+      setIsLoading(true);
+      try {
+        const data = await itemService.getAllItems();
+        setItems(data || []);
+      } catch (error) {
+        console.error("Gagal mengambil data kategori:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchItems();
+  }, []);
 
   // Filter produk berdasarkan kategori menggunakan perbandingan string biasa (toLowerCase)
-  const filteredItems = db.items.filter(item => {
-    if (!item.kategori || !category) return false;
-    return item.kategori.toLowerCase().trim() === category.toLowerCase().trim();
+  const filteredItems = items.filter(item => {
+    const itemCat = item.kategori || '';
+    if (!itemCat || !category) return false;
+    return itemCat.toLowerCase().trim() === category.toLowerCase().trim();
   });
 
   const products = filteredItems.map((item, idx) => ({
     id: item.id,
-    name: item.nama,
-    price: `Rp ${item.harga.toLocaleString('id-ID')}`,
-    location: item.lokasi.split(',')[0],
+    name: item.nama_barang || item.nama,
+    price: `Rp ${Number(item.harga).toLocaleString('id-ID')}`,
+    location: (item.lokasi || 'Kampus UNNES').split(',')[0],
     img: item.foto,
     grade: item.kondisi.includes('A') ? 'A' : item.kondisi.includes('B') ? 'B' : item.kondisi.includes('C') ? 'C' : 'A',
     barter: item.status === 'barter' || item.status === 'keduanya',
@@ -33,7 +51,7 @@ export default function CategoryPage({ category, onNavigate }: CategoryPageProps
       <nav className="flex items-center gap-2 text-xs text-gray-500">
         <button
           onClick={() => onNavigate('home')}
-          className="hover:text-gray-900 transition-colors flex items-center gap-1 font-medium"
+          className="hover:text-gray-900 transition-colors flex items-center gap-1 font-medium cursor-pointer"
         >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
@@ -55,12 +73,18 @@ export default function CategoryPage({ category, onNavigate }: CategoryPageProps
           {category}
         </h1>
         <p className="text-xs text-gray-500 mt-1">
-          Menampilkan {products.length} barang dalam kategori {category}
+          {isLoading ? (
+            <span>Memuat data kategori...</span>
+          ) : (
+            <>Menampilkan {products.length} barang dalam kategori {category}</>
+          )}
         </p>
       </div>
 
       {/* Grid Produk atau Empty State */}
-      {products.length === 0 ? (
+      {isLoading ? (
+        <div className="p-16 text-center text-gray-500 text-sm">Sedang memuat data dari server...</div>
+      ) : products.length === 0 ? (
         <div
           className="p-12 rounded-2xl border text-center space-y-4 my-6"
           style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
@@ -92,7 +116,7 @@ export default function CategoryPage({ category, onNavigate }: CategoryPageProps
             <button
               key={product.id}
               onClick={() => onNavigate('product', { productId: product.id })}
-              className="rounded-2xl border overflow-hidden text-left group hover:shadow-lg hover:-translate-y-1 transition-all duration-200"
+              className="rounded-2xl border overflow-hidden text-left group hover:shadow-lg hover:-translate-y-1 transition-all duration-200 cursor-pointer"
               style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
             >
               <div className="relative aspect-square overflow-hidden bg-gray-100">
@@ -122,7 +146,7 @@ export default function CategoryPage({ category, onNavigate }: CategoryPageProps
                 </div>
               </div>
               <div className="p-3">
-                <p className="text-sm font-semibold leading-snug line-clamp-2 min-h-[2.5rem]">{product.name}</p>
+                <p className="text-sm font-semibold leading-snug line-clamp-2 min-h-[2.5rem] text-gray-900">{product.name}</p>
                 <p
                   className="text-base font-black mt-1.5"
                   style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-display)' }}

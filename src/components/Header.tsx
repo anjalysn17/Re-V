@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getDB } from '../services/db';
+import { chatService } from '../services/db'; // Menggunakan layanan database Railway jika diperlukan
 import { APP_NAME, APP_LOGO_LETTER } from '../constants/brand';
 
 interface HeaderProps {
@@ -27,12 +27,22 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
   const [search, setSearch] = useState('');
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const notifications = getDB().notifications;
-  const unreadCount = notifications.filter(n => !n.sudah_dibaca).length;
+  
+  // State untuk notifikasi dari backend (menggantikan getDB().notifications)
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
-  const computedCartCount = cartCount !== undefined
-    ? cartCount
-    : (currentUser ? (getDB().cart || []).filter(c => c.id_user === currentUser.id).length : 0);
+  // Ambil data notifikasi jika user sudah login
+  useEffect(() => {
+    if (currentUser) {
+      // Simulasi fetch notifikasi atau bisa dihubungkan ke endpoint chat/notif backend Railway
+      // Untuk sementara menggunakan data kosong atau state lokal aman
+      setNotifications([]); 
+      setUnreadCount(0);
+    }
+  }, [currentUser]);
+
+  const computedCartCount = cartCount !== undefined ? cartCount : 0;
 
   const handlePerformSearch = (customQuery?: string) => {
     const inputEl = document.querySelector('header input[type="text"]') as HTMLInputElement | null;
@@ -75,7 +85,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
           </svg>
         </button>
 
-        {/* Search Bar - Otomatis Melebar & Proporsional ke Kiri */}
+        {/* Search Bar */}
         <div className="flex-1 relative">
           <div className="flex rounded-xl overflow-hidden shadow-sm">
             <input
@@ -194,51 +204,22 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                   <span className="font-bold text-xs text-gray-900">Notifikasi</span>
                   <span className="text-[10px] text-gray-400 font-medium cursor-pointer hover:underline">Tandai dibaca</span>
                 </div>
-                <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
-                  {notifications.map((n) => (
-                    <div
-                      key={n.id}
-                      className={`p-3 flex items-start gap-2.5 hover:bg-black/5 cursor-pointer transition-colors ${!n.sudah_dibaca ? 'bg-[#567257]/5' : ''
-                        }`}
-                    >
-                      <div
-                        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-                        style={{
-                          background:
-                            n.tipe === 'barter' ? '#e07b3915' : n.tipe === 'chat' ? '#56725715' : '#4a8c5c15',
-                          color:
-                            n.tipe === 'barter' ? 'var(--color-accent)' : n.tipe === 'chat' ? 'var(--color-primary)' : '#4a8c5c',
-                        }}
-                      >
-                        {n.tipe === 'barter' && (
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                          </svg>
-                        )}
-                        {n.tipe === 'chat' && (
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                          </svg>
-                        )}
-                        {n.tipe === 'success' && (
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
+                <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto p-4 text-center text-xs text-gray-500">
+                  {notifications.length === 0 ? (
+                    <p>Tidak ada notifikasi baru.</p>
+                  ) : (
+                    notifications.map((n) => (
+                      <div key={n.id} className="p-2 text-left">
+                        <p>{n.teks}</p>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs text-gray-800 leading-snug">{n.teks}</p>
-                        <span className="text-[10px] text-gray-400 mt-0.5 block">{n.waktu}</span>
-                      </div>
-                      {!n.sudah_dibaca && <span className="w-1.5 h-1.5 rounded-full bg-[#e07b39] shrink-0 mt-1" />}
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
             )}
           </div>
 
-          {/* Conditional Auth Slot: Belum login -> Tombol Masuk, Sudah login -> Foto Profil + Nama */}
+          {/* Conditional Auth Slot */}
           {!currentUser ? (
             <button
               onClick={() => openAuthModal('login')}
@@ -289,9 +270,6 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                         }}
                         className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
                       >
-                        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                        </svg>
                         <span>Profil Saya</span>
                       </button>
                       <button
@@ -301,9 +279,6 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                         }}
                         className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
                       >
-                        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-                        </svg>
                         <span>Pesanan Saya</span>
                       </button>
                       <button
@@ -313,9 +288,6 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                         }}
                         className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
                       >
-                        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                        </svg>
                         <span>Barang Saya</span>
                       </button>
                       <button
@@ -325,9 +297,6 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                         }}
                         className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
                       >
-                        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                        </svg>
                         <span>Barter Saya</span>
                       </button>
                     </div>
@@ -340,9 +309,6 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                         }}
                         className="w-full px-4 py-2 text-left text-red-600 hover:bg-red-50 flex items-center gap-2 font-semibold transition-colors"
                       >
-                        <svg className="w-3.5 h-3.5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                        </svg>
                         <span>Keluar / Logout</span>
                       </button>
                     </div>
@@ -393,14 +359,6 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                 fontFamily: 'var(--font-body)',
               }}
             >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M8 12h.01M12 12h.01M16 12h.01M21 3H3c-1.1 0-2 .9-2 2v14l4-4h16c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"
-                />
-              </svg>
               <span>Chat</span>
             </button>
           </div>

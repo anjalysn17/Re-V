@@ -1,8 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getDB, saveDB, generateId } from '../services/db';
-import { Item, User, Offer, Conversation, Message, Notification } from '../types/database';
-import { createOfferAndConversation, getOrCreateConversation } from '../utils/barterActions';
+import { itemService, barterService } from '../services/db';
 import { APP_NAME } from '../constants/brand';
 
 interface SmartBarterProps {
@@ -21,8 +19,8 @@ const CATEGORIES = [
 ];
 
 interface MatchResultItem {
-  item: Item;
-  owner: User;
+  item: any;
+  owner: any;
   match: number;
   distance: string;
 }
@@ -41,23 +39,36 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
   const [toastMsg, setToastMsg] = useState('');
   const [sentOfferIds, setSentOfferIds] = useState<Set<string>>(new Set());
 
-  // Ambil database terkini
-  const db = getDB();
+  // State data dari backend
+  const [myBarterItems, setMyBarterItems] = useState<any[]>([]);
+  const [selectedMyItemId, setSelectedMyItemId] = useState<string | null>(null);
+  const [isLoadingMyItems, setIsLoadingMyItems] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
 
-  // Kolom 1: Barang barter milik user yang sedang login
-  const myBarterItems = useMemo(() => {
-    if (!currentUser) return [];
-    return db.items.filter(
-      item =>
-        item.id_pemilik === currentUser.id &&
-        (item.status === 'barter' || item.status === 'keduanya')
-    );
-  }, [db.items, currentUser]);
-
-  // ID barang saya yang sedang dipilih di Kolom 1
-  const [selectedMyItemId, setSelectedMyItemId] = useState<string | null>(() => {
-    return myBarterItems.length > 0 ? myBarterItems[0].id : null;
-  });
+  // Ambil daftar barang barter milik user dari backend
+  useEffect(() => {
+    const fetchMyBarterItems = async () => {
+      if (!currentUser) return;
+      setIsLoadingMyItems(true);
+      try {
+        const allItems = await itemService.getAllItems();
+        const mine = allItems.filter(
+          (item: any) =>
+            item.id_pemilik === currentUser.id &&
+            (item.status === 'barter' || item.status === 'keduanya')
+        );
+        setMyBarterItems(mine);
+        if (mine.length > 0 && !selectedMyItemId) {
+          setSelectedMyItemId(mine[0].id);
+        }
+      } catch (error) {
+        console.error("Gagal mengambil barang barter saya:", error);
+      } finally {
+        setIsLoadingMyItems(false);
+      }
+    };
+    fetchMyBarterItems();
+  }, [currentUser]);
 
   const selectedMyItem = myBarterItems.find(it => it.id === selectedMyItemId) || null;
 
@@ -91,85 +102,91 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
   }
 
   // Handler tombol "Temukan Pasangan Barter"
-  const handlePerformSearch = () => {
+  const handlePerformSearch = async () => {
     setValidationMsg('');
     if (!selectedMyItem) {
       setValidationMsg('Pilih salah satu barang yang kamu miliki di Kolom 1 terlebih dahulu.');
       return;
     }
 
-    const currentDB = getDB();
-    const otherItems = (currentDB.items || []).filter(item => {
-      // 1. Bukan milik sendiri
-      if (item.id_pemilik === currentUser.id) return false;
-      // 2. Status barter atau keduanya
-      if (item.status !== 'barter' && item.status !== 'keduanya') return false;
-      // 3. Filter kategori
-      if (selectedCategory !== 'Semua') {
-        if (item.kategori.toLowerCase().trim() !== selectedCategory.toLowerCase().trim()) {
-          return false;
+    setIsSearching(true);
+    try {
+      const allItems = await itemService.getAllItems();
+      const otherItems = allItems.filter((item: any) => {
+        // 1. Bukan milik sendiri
+        if (item.id_pemilik === currentUser.id) return false;
+        // 2. Status barter atau keduanya
+        if (item.status !== 'barter' && item.status !== 'keduanya') return false;
+        // 3. Filter kategori
+        if (selectedCategory !== 'Semua') {
+          if (item.kategori.toLowerCase().trim() !== selectedCategory.toLowerCase().trim()) {
+            return false;
+          }
+        }
+        // 4. Filter teks pencarian (case-insensitive)
+        if (searchTarget.trim()) {
+          const q = searchTarget.trim().toLowerCase();
+          const itemName = item.nama_barang || item.nama || '';
+          const itemDesc = item.deskripsi || '';
+          const inName = itemName.toLowerCase().includes(q);
+          const inDesc = itemDesc.toLowerCase().includes(q);
+          if (!inName && !inDesc) return false;
+        }
+        return true;
+      });
+
+      const results: MatchResultItem[] = otherItems.map((item: any) => {
+        const owner = {
+          id: item.id_pemilik,
+          nama: item.owner_name || `Pengguna ${APP_NAME}`,
+          foto_profil: item.owner_photo || '/assets/seed-images/avatar-placeholder.svg',
+          rating: 4.8,
+          lokasi: item.lokasi || 'Semarang',
+        };
+
+        // Hitung skor kecocokan berdasarkan kedekatan harga
+        const myPrice = selectedMyItem.harga;
+        const theirPrice = item.harga;
+        const priceDiff = Math.abs(myPrice - theirPrice);
+        const maxPrice = Math.max(myPrice, theirPrice, 1);
+        const ratio = priceDiff / maxPrice;
+        let match = Math.round(98 - ratio * 45);
+        if (match < 50) match = 50;
+        if (match > 98) match = 98;
+
+        return {
+          item,
+          owner,
+          match,
+          distance: (item.lokasi || 'Sekitar Kampus').split(',')[0],
+        };
+      });
+
+      // Urutkan hasil
+      if (sortBy === 'Kecocokan') {
+        results.sort((a, b) => b.match - a.match);
+      } else if (sortBy === 'Rating') {
+        results.sort((a, b) => b.owner.rating - a.owner.rating);
+      }
+
+      // Dedup berdasarkan item.id
+      const seenIds = new Set<string>();
+      const hasilBaru: MatchResultItem[] = [];
+      for (const res of results) {
+        if (!seenIds.has(res.item.id)) {
+          seenIds.add(res.item.id);
+          hasilBaru.push(res);
         }
       }
-      // 4. Filter teks pencarian (case-insensitive)
-      if (searchTarget.trim()) {
-        const q = searchTarget.trim().toLowerCase();
-        const inName = item.nama.toLowerCase().includes(q);
-        const inDesc = item.deskripsi.toLowerCase().includes(q);
-        if (!inName && !inDesc) return false;
-      }
-      return true;
-    });
 
-    const results: MatchResultItem[] = otherItems.map(item => {
-      const owner = currentDB.users.find(u => u.id === item.id_pemilik) || {
-        id: item.id_pemilik,
-        nama: `Pengguna ${APP_NAME}`,
-        email: '',
-        password: '',
-        foto_profil: '/assets/seed-images/avatar-placeholder.svg',
-        rating: 4.8,
-        lokasi: item.lokasi,
-        role: 'user' as const,
-      };
-
-      // Hitung skor kecocokan berdasarkan kedekatan harga
-      const myPrice = selectedMyItem.harga;
-      const theirPrice = item.harga;
-      const priceDiff = Math.abs(myPrice - theirPrice);
-      const maxPrice = Math.max(myPrice, theirPrice, 1);
-      const ratio = priceDiff / maxPrice;
-      let match = Math.round(98 - ratio * 45);
-      if (match < 50) match = 50;
-      if (match > 98) match = 98;
-
-      return {
-        item,
-        owner,
-        match,
-        distance: item.lokasi.split(',')[0] || 'Sekitar Kampus',
-      };
-    });
-
-    // Urutkan hasil
-    if (sortBy === 'Kecocokan') {
-      results.sort((a, b) => b.match - a.match);
-    } else if (sortBy === 'Rating') {
-      results.sort((a, b) => b.owner.rating - a.owner.rating);
+      setMatchResults(hasilBaru);
+      setSearched(true);
+    } catch (error) {
+      console.error("Gagal melakukan pencarian barter:", error);
+      setValidationMsg('Terjadi kesalahan saat mencari pasangan barter.');
+    } finally {
+      setIsSearching(false);
     }
-
-    // Dedup berdasarkan item.id sebelum disimpan ke state
-    const seenIds = new Set<string>();
-    const hasilBaru: MatchResultItem[] = [];
-    for (const res of results) {
-      if (!seenIds.has(res.item.id)) {
-        seenIds.add(res.item.id);
-        hasilBaru.push(res);
-      }
-    }
-
-    // PENTING: SET ULANG SEPENUHNYA dengan hasil pencarian terbaru (BUKAN append prev => [...prev, ...hasilBaru])
-    setMatchResults(hasilBaru);
-    setSearched(true);
   };
 
   // Handler pengurutan hasil
@@ -186,7 +203,6 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
     });
   };
 
-  // Pengaman tambahan: dedup berdasarkan item.id sebelum ditampilkan ke UI
   const searchResults: MatchResultItem[] = useMemo(() => {
     const seen = new Set<string>();
     return matchResults.filter(res => {
@@ -198,66 +214,48 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
   }, [matchResults]);
 
   // Handler tombol "Kirim Tawaran Tukar"
-  const handleSendOffer = (targetItem: Item) => {
+  const handleSendOffer = async (targetItem: any) => {
     if (!selectedMyItem || !currentUser) return;
 
-    const { convId } = createOfferAndConversation({
-      myItem: selectedMyItem,
-      targetItem,
-      currentUser,
-    });
+    try {
+      const offerData = {
+        item_ditawarkan: selectedMyItem.id,
+        item_diminta: targetItem.id,
+        id_pengirim: currentUser.id,
+        id_penerima: targetItem.id_pemilik,
+        selisih_harga: selectedMyItem.harga - targetItem.harga,
+      };
 
-    setSentOfferIds(prev => new Set(prev).add(targetItem.id));
-
-    // Arahkan user ke halaman chat dengan percakapan ini terbuka
-    onNavigate('chat', convId);
+      const result = await barterService.createOffer(offerData);
+      if (result.success) {
+        setSentOfferIds(prev => new Set(prev).add(targetItem.id));
+        setToastMsg('✓ Tawaran tukar berhasil dikirim!');
+        setTimeout(() => setToastMsg(''), 3000);
+        onNavigate('chat', { targetUserId: targetItem.id_pemilik, targetItemId: targetItem.id });
+      } else {
+        setToastMsg(result.message || 'Gagal mengirim tawaran.');
+        setTimeout(() => setToastMsg(''), 3000);
+      }
+    } catch (error) {
+      console.error(error);
+      setToastMsg('Terjadi kesalahan jaringan.');
+      setTimeout(() => setToastMsg(''), 3000);
+    }
   };
 
   // Handler tombol "Buka Obrolan"
-  const handleOpenChat = (targetItem: Item) => {
+  const handleOpenChat = (targetItem: any) => {
     if (!currentUser) return;
-
-    const { convId } = getOrCreateConversation({
-      targetItem,
-      currentUser,
-    });
-
-    onNavigate('chat', convId);
+    onNavigate('chat', { targetUserId: targetItem.id_pemilik, targetItemId: targetItem.id });
   };
 
   // Handler tombol "Simpan ke Keranjang"
-  const handleSaveToCart = (targetItem: Item) => {
+  const handleSaveToCart = (_targetItem: any) => {
     if (!currentUser) {
       openAuthModal('login');
       return;
     }
-    const currentDB = getDB();
-    if (!Array.isArray(currentDB.cart)) currentDB.cart = [];
-
-    const alreadyInCart = currentDB.cart.some(
-      c => c.id_user === currentUser.id && c.id_item === targetItem.id
-    );
-
-    if (alreadyInCart) {
-      setToastMsg('Barang ini sudah ada di keranjangmu');
-      setTimeout(() => setToastMsg(''), 3000);
-      return;
-    }
-
-    const newCartItem = {
-      id: generateId('CRT', currentDB.cart),
-      id_user: currentUser.id,
-      id_item: targetItem.id,
-      ditambahkan_pada: new Date().toLocaleDateString('id-ID', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      }),
-    };
-
-    currentDB.cart.unshift(newCartItem);
-    saveDB(currentDB);
-    setToastMsg('✓ Berhasil disimpan ke keranjang!');
+    setToastMsg('✓ Keranjang akan terhubung ke backend pada update berikutnya!');
     setTimeout(() => setToastMsg(''), 3000);
     if (onCartUpdated) {
       onCartUpdated();
@@ -299,7 +297,9 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
               </h2>
             </div>
 
-            {myBarterItems.length === 0 ? (
+            {isLoadingMyItems ? (
+              <div className="p-6 text-center text-xs text-gray-400">Memuat barang Anda...</div>
+            ) : myBarterItems.length === 0 ? (
               <div
                 className="p-6 text-center space-y-2 rounded-xl border border-dashed my-2"
                 style={{ borderColor: 'var(--color-border)', background: '#f8f4ee' }}
@@ -327,6 +327,7 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                 {myBarterItems.map(item => {
                   const grade = item.kondisi.includes('A') ? 'A' : item.kondisi.includes('B') ? 'B' : item.kondisi.includes('C') ? 'C' : 'A';
                   const isSelected = selectedMyItemId === item.id;
+                  const itemName = item.nama_barang || item.nama;
                   return (
                     <button
                       key={item.id}
@@ -344,7 +345,7 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                       <div className="relative shrink-0">
                         <img
                           src={item.foto}
-                          alt={item.nama}
+                          alt={itemName}
                           className="w-10 h-10 rounded-lg object-cover"
                           onError={e => {
                             (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
@@ -358,7 +359,7 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                         </span>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold leading-tight truncate text-gray-800">{item.nama}</p>
+                        <p className="text-xs font-semibold leading-tight truncate text-gray-800">{itemName}</p>
                         <p className="text-[11px] mt-0.5" style={{ color: 'var(--color-muted)' }}>
                           {item.kategori} · Rp {item.harga.toLocaleString('id-ID')}
                         </p>
@@ -480,11 +481,16 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
 
           <button
             type="button"
+            disabled={isSearching}
             onClick={handlePerformSearch}
-            className="w-full py-2.5 mt-3 rounded-xl text-xs font-bold text-white transition-all hover:opacity-90 shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+            className="w-full py-2.5 mt-3 rounded-xl text-xs font-bold text-white transition-all hover:opacity-90 shadow-sm flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
             style={{ background: 'var(--color-accent)' }}
           >
-            <span>Temukan Pasangan Barter</span>
+            {isSearching ? (
+              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+            ) : (
+              <span>Temukan Pasangan Barter</span>
+            )}
           </button>
         </div>
       </div>
@@ -492,7 +498,6 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
       {/* Results Section */}
       {searched && (
         <div className="space-y-4 pt-2">
-          {/* Header Hasil Pencocokan */}
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-bold text-gray-900">
@@ -538,123 +543,127 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {searchResults.map(result => (
-                <div 
-                  key={result.item.id}
-                  className="rounded-2xl border overflow-hidden hover:shadow-md transition-all"
-                  style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
-                >
-                  <div className="p-4 space-y-3">
-                    {/* User info */}
-                    <div className="flex items-center gap-3">
-                      <div className="shrink-0">
-                        <img
-                          src={result.owner.foto_profil}
-                          alt={result.owner.nama}
-                          className="w-11 h-11 rounded-full object-cover border"
-                          style={{ borderColor: 'var(--color-border)' }}
-                          onError={e => {
-                            (e.target as HTMLImageElement).src = '/assets/seed-images/avatar-placeholder.svg';
-                          }}
-                        />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-bold text-sm text-gray-900 leading-none">{result.owner.nama}</h3>
-                        <div className="flex items-center gap-1.5 text-xs mt-1.5" style={{ color: 'var(--color-muted)' }}>
-                          <div className="flex items-center gap-1">
-                            <svg className="w-3.5 h-3.5 text-amber-500 fill-current" viewBox="0 0 20 20">
-                              <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                            </svg>
-                            <span className="font-semibold text-gray-700">{result.owner.rating}</span>
+              {searchResults.map(result => {
+                const itemName = result.item.nama_barang || result.item.nama;
+                const myItemName = selectedMyItem?.nama_barang || selectedMyItem?.nama || 'Barang Kamu';
+                return (
+                  <div 
+                    key={result.item.id}
+                    className="rounded-2xl border overflow-hidden hover:shadow-md transition-all"
+                    style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
+                  >
+                    <div className="p-4 space-y-3">
+                      {/* User info */}
+                      <div className="flex items-center gap-3">
+                        <div className="shrink-0">
+                          <img
+                            src={result.owner.foto_profil}
+                            alt={result.owner.nama}
+                            className="w-11 h-11 rounded-full object-cover border"
+                            style={{ borderColor: 'var(--color-border)' }}
+                            onError={e => {
+                              (e.target as HTMLImageElement).src = '/assets/seed-images/avatar-placeholder.svg';
+                            }}
+                          />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-bold text-sm text-gray-900 leading-none">{result.owner.nama}</h3>
+                          <div className="flex items-center gap-1.5 text-xs mt-1.5" style={{ color: 'var(--color-muted)' }}>
+                            <div className="flex items-center gap-1">
+                              <svg className="w-3.5 h-3.5 text-amber-500 fill-current" viewBox="0 0 20 20">
+                                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                              </svg>
+                              <span className="font-semibold text-gray-700">{result.owner.rating}</span>
+                            </div>
+                            <span>·</span>
+                            <span>{result.distance}</span>
                           </div>
-                          <span>·</span>
-                          <span>{result.distance}</span>
                         </div>
                       </div>
-                    </div>
 
-                    {/* Swap visualization */}
-                    <div className="flex items-center gap-2">
-                      <div 
-                        className="flex-1 rounded-xl p-2.5 text-center flex flex-col items-center justify-center min-w-0"
-                        style={{ background: '#56725710', border: '1px solid #56725725' }}
-                      >
-                        <img
-                          src={result.item.foto}
-                          alt={result.item.nama}
-                          className="w-12 h-12 rounded-lg object-cover mx-auto"
-                          onError={e => {
-                            (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
-                          }}
-                        />
-                        <p className="text-xs font-semibold mt-1.5 leading-tight truncate w-full">{result.item.nama}</p>
-                        <p className="text-xs mt-0.5" style={{ color: 'var(--color-accent)' }}>
-                          Rp {result.item.harga.toLocaleString('id-ID')}
-                        </p>
-                      </div>
-                      <div className="text-2xl font-black shrink-0" style={{ color: 'var(--color-muted)' }}>⇌</div>
-                      <div 
-                        className="flex-1 rounded-xl p-2.5 text-center flex flex-col items-center justify-center min-w-0"
-                        style={{ background: '#e07b3910', border: '1px solid #e07b3925' }}
-                      >
-                        <img
-                          src={selectedMyItem?.foto || '/assets/seed-images/placeholder.svg'}
-                          alt={selectedMyItem?.nama || 'Barang Kamu'}
-                          className="w-12 h-12 rounded-lg object-cover mx-auto"
-                          onError={e => {
-                            (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
-                          }}
-                        />
-                        <p className="text-xs font-semibold mt-1.5 leading-tight truncate w-full">
-                          {selectedMyItem?.nama || 'Barang Kamu'}
-                        </p>
-                        <p className="text-xs mt-0.5" style={{ color: 'var(--color-muted)' }}>= barang kamu</p>
-                      </div>
-                    </div>
-
-                    {/* CTA Buttons */}
-                    <div className="flex flex-col gap-2">
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenChat(result.item)}
-                          className="flex-1 py-2 rounded-xl border text-xs font-bold transition-all hover:opacity-80 cursor-pointer"
-                          style={{ borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
+                      {/* Swap visualization */}
+                      <div className="flex items-center gap-2">
+                        <div 
+                          className="flex-1 rounded-xl p-2.5 text-center flex flex-col items-center justify-center min-w-0"
+                          style={{ background: '#56725710', border: '1px solid #56725725' }}
                         >
-                          Buka Obrolan
-                        </button>
-                        <button
-                          type="button"
-                          disabled={sentOfferIds.has(result.item.id)}
-                          onClick={() => handleSendOffer(result.item)}
-                          className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all shadow-xs ${
-                            sentOfferIds.has(result.item.id)
-                              ? 'opacity-80 cursor-default text-white'
-                              : 'text-white hover:opacity-90 active:scale-98 cursor-pointer'
-                          }`}
-                          style={{ background: sentOfferIds.has(result.item.id) ? '#4a8c5c' : 'var(--color-primary)' }}
-                        >
-                          {sentOfferIds.has(result.item.id) ? '✓ Tawaran Terkirim' : 'Kirim Tawaran Tukar'}
-                        </button>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleSaveToCart(result.item)}
-                        className="w-full py-1.5 rounded-xl border border-gray-300 hover:border-gray-400 bg-white hover:bg-gray-50 text-gray-700 text-xs font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                      >
-                        <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
+                          <img
+                            src={result.item.foto}
+                            alt={itemName}
+                            className="w-12 h-12 rounded-lg object-cover mx-auto"
+                            onError={e => {
+                              (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
+                            }}
                           />
-                        </svg>
-                        <span>Simpan ke Keranjang</span>
-                      </button>
+                          <p className="text-xs font-semibold mt-1.5 leading-tight truncate w-full">{itemName}</p>
+                          <p className="text-xs mt-0.5" style={{ color: 'var(--color-accent)' }}>
+                            Rp {result.item.harga.toLocaleString('id-ID')}
+                          </p>
+                        </div>
+                        <div className="text-2xl font-black shrink-0" style={{ color: 'var(--color-muted)' }}>⇌</div>
+                        <div 
+                          className="flex-1 rounded-xl p-2.5 text-center flex flex-col items-center justify-center min-w-0"
+                          style={{ background: '#e07b3910', border: '1px solid #e07b3925' }}
+                        >
+                          <img
+                            src={selectedMyItem?.foto || '/assets/seed-images/placeholder.svg'}
+                            alt={myItemName}
+                            className="w-12 h-12 rounded-lg object-cover mx-auto"
+                            onError={e => {
+                              (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
+                            }}
+                          />
+                          <p className="text-xs font-semibold mt-1.5 leading-tight truncate w-full">
+                            {myItemName}
+                          </p>
+                          <p className="text-xs mt-0.5" style={{ color: 'var(--color-muted)' }}>= barang kamu</p>
+                        </div>
+                      </div>
+
+                      {/* CTA Buttons */}
+                      <div className="flex flex-col gap-2">
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenChat(result.item)}
+                            className="flex-1 py-2 rounded-xl border text-xs font-bold transition-all hover:opacity-80 cursor-pointer"
+                            style={{ borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}
+                          >
+                            Buka Obrolan
+                          </button>
+                          <button
+                            type="button"
+                            disabled={sentOfferIds.has(result.item.id)}
+                            onClick={() => handleSendOffer(result.item)}
+                            className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all shadow-xs ${
+                              sentOfferIds.has(result.item.id)
+                                ? 'opacity-80 cursor-default text-white'
+                                : 'text-white hover:opacity-90 active:scale-98 cursor-pointer'
+                            }`}
+                            style={{ background: sentOfferIds.has(result.item.id) ? '#4a8c5c' : 'var(--color-primary)' }}
+                          >
+                            {sentOfferIds.has(result.item.id) ? '✓ Tawaran Terkirim' : 'Kirim Tawaran Tukar'}
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveToCart(result.item)}
+                          className="w-full py-1.5 rounded-xl border border-gray-300 hover:border-gray-400 bg-white hover:bg-gray-50 text-gray-700 text-xs font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                        >
+                          <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
+                            />
+                          </svg>
+                          <span>Simpan ke Keranjang</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

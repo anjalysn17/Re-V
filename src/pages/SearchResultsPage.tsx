@@ -1,5 +1,6 @@
+import { useState, useEffect } from 'react';
 import Footer from '../components/Footer';
-import { getDB } from '../services/db';
+import { itemService } from '../services/db';
 
 interface SearchResultsPageProps {
   query: string;
@@ -7,23 +8,44 @@ interface SearchResultsPageProps {
 }
 
 export default function SearchResultsPage({ query, onNavigate }: SearchResultsPageProps) {
-  const db = getDB();
+  const [items, setItems] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchItems = async () => {
+      setIsLoading(true);
+      try {
+        const data = await itemService.getAllItems();
+        setItems(data || []);
+      } catch (error) {
+        console.error("Gagal mengambil data pencarian:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchItems();
+  }, []);
+
   const trimmedQuery = (query || '').trim().toLowerCase();
 
   // Filter barang yang nama ATAU deskripsi ATAU kategori-nya mengandung query (case-insensitive)
-  const filteredItems = db.items.filter(item => {
+  const filteredItems = items.filter(item => {
     if (!trimmedQuery) return true;
-    const matchName = item.nama && item.nama.toLowerCase().includes(trimmedQuery);
-    const matchDesc = item.deskripsi && item.deskripsi.toLowerCase().includes(trimmedQuery);
-    const matchCategory = item.kategori && item.kategori.toLowerCase().includes(trimmedQuery);
-    return matchName || matchDesc || matchCategory;
+    const itemName = item.nama_barang || item.nama || '';
+    const itemDesc = item.deskripsi || '';
+    const itemCategory = item.kategori || '';
+
+    const matchName = itemName.toLowerCase().includes(trimmedQuery);
+    const matchDesc = itemDesc.toLowerCase().includes(trimmedQuery);
+    const matchCat = itemCategory.toLowerCase().includes(trimmedQuery);
+    return matchName || matchDesc || matchCat;
   });
 
   const products = filteredItems.map((item, idx) => ({
     id: item.id,
-    name: item.nama,
+    name: item.nama_barang || item.nama,
     price: `Rp ${item.harga.toLocaleString('id-ID')}`,
-    location: item.lokasi.split(',')[0],
+    location: (item.lokasi || 'Kampus UNNES').split(',')[0],
     img: item.foto,
     grade: item.kondisi.includes('A') ? 'A' : item.kondisi.includes('B') ? 'B' : item.kondisi.includes('C') ? 'C' : 'A',
     barter: item.status === 'barter' || item.status === 'keduanya',
@@ -59,7 +81,9 @@ export default function SearchResultsPage({ query, onNavigate }: SearchResultsPa
           Hasil Pencarian
         </h1>
         <p className="text-xs text-gray-500 mt-1">
-          {products.length > 0 ? (
+          {isLoading ? (
+            <span>Memuat hasil pencarian...</span>
+          ) : products.length > 0 ? (
             <>
               Menampilkan <span className="font-bold text-gray-800">{products.length}</span> barang untuk kata kunci <span className="font-bold text-gray-800">"{query}"</span>
             </>
@@ -72,7 +96,9 @@ export default function SearchResultsPage({ query, onNavigate }: SearchResultsPa
       </div>
 
       {/* Grid Hasil Pencarian */}
-      {products.length === 0 ? (
+      {isLoading ? (
+        <div className="p-16 text-center text-gray-500 text-sm">Sedang memuat data dari server...</div>
+      ) : products.length === 0 ? (
         <div
           className="p-12 rounded-2xl border text-center space-y-4 my-4"
           style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}

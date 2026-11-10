@@ -11,7 +11,10 @@ const chatRoutes = require('./routes/chatRoutes');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+app.use(cors({
+  origin: '*', // Atau masukkan URL Vercel spesifik: ['https://re-v-xxx.vercel.app', 'http://localhost:5173']
+  credentials: true
+}));
 app.use(express.json());
 
 // Register API Routes

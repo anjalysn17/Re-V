@@ -1,5 +1,6 @@
+import { useState, useEffect } from 'react';
 import Footer from '../components/Footer';
-import { getDB } from '../services/db';
+import { itemService } from '../services/db';
 
 interface HomePageProps {
   onNavigate: (page: string, params?: any) => void;
@@ -14,11 +15,32 @@ const categoryCards = [
 ];
 
 export default function HomePage({ onNavigate }: HomePageProps) {
-  const allProducts = getDB().items.map((item, idx) => ({
+  // State untuk menyimpan daftar barang dari Railway
+  const [items, setItems] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    // Ambil data dari backend saat komponen dimuat
+    const fetchItems = async () => {
+      try {
+        const data = await itemService.getAllItems();
+        setItems(data);
+      } catch (error) {
+        console.error("Gagal mengambil data beranda:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchItems();
+  }, []);
+
+  // Memetakan data dari backend ke format yang dibutuhkan UI
+  const allProducts = items.map((item: any, idx: number) => ({
     id: item.id,
-    name: item.nama,
+    name: item.nama_barang, // Di skema backend namanya nama_barang, bukan nama
     price: `Rp ${item.harga.toLocaleString('id-ID')}`,
-    location: item.lokasi.split(',')[0],
+    // Jika tidak ada lokasi spesifik di item, bisa fallback ke lokasi default
+    location: item.lokasi ? item.lokasi.split(',')[0] : 'Kampus UNNES',
     img: item.foto,
     grade: item.kondisi.includes('A') ? 'A' : item.kondisi.includes('B') ? 'B' : item.kondisi.includes('C') ? 'C' : 'A',
     barter: item.status === 'barter' || item.status === 'keduanya',
@@ -123,7 +145,9 @@ export default function HomePage({ onNavigate }: HomePageProps) {
           </div>
         </div>
         <div className="flex-1 flex gap-3 overflow-x-auto pb-1">
-          {barterProducts.length === 0 ? (
+          {isLoading ? (
+            <div className="text-white/80 text-xs italic">Memuat data...</div>
+          ) : barterProducts.length === 0 ? (
             <div className="flex items-center px-4 py-2 text-white/80 text-xs italic">
               Belum ada barang barter yang tersedia saat ini
             </div>
@@ -162,7 +186,9 @@ export default function HomePage({ onNavigate }: HomePageProps) {
           )}
         </div>
 
-        {allProducts.length === 0 ? (
+        {isLoading ? (
+          <div className="p-12 text-center text-gray-500">Memuat barang...</div>
+        ) : allProducts.length === 0 ? (
           <div
             className="p-12 rounded-2xl border text-center space-y-4 my-2"
             style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}

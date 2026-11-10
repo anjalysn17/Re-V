@@ -1,9 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ReturnModal from '../components/ReturnModal';
 import { useAuth } from '../context/AuthContext';
-import { getDB, saveDB, generateId } from '../services/db';
-import { Item, User } from '../types/database';
-import { createOfferAndConversation, getOrCreateConversation } from '../utils/barterActions';
+import { itemService, barterService, chatService } from '../services/db';
 import { APP_NAME } from '../constants/brand';
 
 interface ProductDetailProps {
@@ -21,19 +19,63 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
   const [qty, setQty] = useState(1);
   const [toastMsg, setToastMsg] = useState('');
 
-  // Ambil database terbaru
-  const db = getDB();
-
-  // Cari item berdasarkan productId
-  const item: Item | undefined = db.items.find(i => i.id === productId);
-
-  // Cari data penjual / pemilik barang
-  const seller: User | undefined = item ? db.users.find(u => u.id === item.id_pemilik) : undefined;
+  // State untuk data dari Backend
+  const [item, setItem] = useState<any>(null);
+  const [seller, setSeller] = useState<any>(null);
+  const [myBarterItems, setMyBarterItems] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(''), 3000);
   };
+
+  useEffect(() => {
+    const fetchDetailData = async () => {
+      if (!productId) return;
+      setIsLoading(true);
+      
+      try {
+        // 1. Ambil detail produk
+        const itemData = await itemService.getItemById(productId);
+        setItem(itemData);
+
+        // TODO: Backend sebaiknya mengembalikan info seller bersamaan dengan getItemById
+        // Untuk sementara, jika data owner tidak lengkap dari backend, kita kasih fallback
+        setSeller({
+          id: itemData?.id_pemilik,
+          nama: itemData?.owner_name || `Pengguna ${APP_NAME}`,
+          foto_profil: itemData?.owner_photo || '/assets/seed-images/avatar-placeholder.svg',
+          lokasi: itemData?.owner_location || itemData?.lokasi,
+          rating: 4.8 // Mock rating sementara
+        });
+
+        // 2. Jika user login, ambil daftar barang milik user yang bisa dibarter
+        if (currentUser) {
+          const allMyItems = await itemService.getAllItems();
+          // Filter barang milik current user yang berstatus barter/keduanya
+          const myBarterReady = allMyItems.filter((i: any) => 
+            i.id_pemilik === currentUser.id && 
+            (i.status === 'barter' || i.status === 'keduanya')
+          );
+          setMyBarterItems(myBarterReady);
+        }
+
+      } catch (error) {
+        console.error("Gagal mengambil detail produk:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchDetailData();
+  }, [productId, currentUser]);
+
+
+  if (isLoading) {
+    return <div className="max-w-4xl mx-auto px-4 py-16 text-center text-gray-500">Memuat detail barang...</div>;
+  }
 
   // State: Jika barang tidak ditemukan di database
   if (!item) {
@@ -74,15 +116,6 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
   const minBarter = Math.round((item.harga * 0.95) / 1000) * 1000;
   const maxBarter = Math.round((item.harga * 1.05) / 1000) * 1000;
 
-  // Daftar barang milik user login yang siap dibarter
-  const myBarterItems: Item[] = currentUser
-    ? db.items.filter(
-        i =>
-          i.id_pemilik === currentUser.id &&
-          (i.status === 'barter' || i.status === 'keduanya')
-      )
-    : [];
-
   const isOwnItem = currentUser && currentUser.id === item.id_pemilik;
 
   // Handler klik tombol "Ajukan Barter"
@@ -98,25 +131,42 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
     setBarterOpen(true);
   };
 
-  // Handler konfirmasi kirim tawaran barter
-  const handleConfirmBarter = () => {
+  // Handler konfirmasi kirim tawaran barter ke Backend API
+  const handleConfirmBarter = async () => {
     if (!currentUser || !selectedMyItemId) return;
-
     const myItem = myBarterItems.find(i => i.id === selectedMyItemId);
     if (!myItem) return;
 
-    const { convId } = createOfferAndConversation({
-      myItem,
-      targetItem: item,
-      currentUser,
-    });
+    setIsSubmitting(true);
+    try {
+      const offerData = {
+        item_ditawarkan: myItem.id,
+        item_diminta: item.id,
+        id_pengirim: currentUser.id,
+        id_penerima: item.id_pemilik,
+        selisih_harga: myItem.harga - item.harga
+      };
 
-    setBarterOpen(false);
-    onNavigate('chat', { conversationId: convId });
+      const result = await barterService.createOffer(offerData);
+      
+      if (result.success) {
+        showToast('✓ Tawaran barter berhasil dikirim!');
+        setBarterOpen(false);
+        // Bisa diredirect ke halaman barter atau halaman chat penawaran
+        onNavigate('barter'); 
+      } else {
+        showToast(result.message || 'Gagal mengirim tawaran barter.');
+      }
+    } catch (error) {
+      console.error(error);
+      showToast('Terjadi kesalahan jaringan.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  // Handler klik tombol "Chat"
-  const handleChat = () => {
+  // Handler klik tombol "Chat" via API
+  const handleChat = async () => {
     if (!currentUser) {
       openAuthModal('login');
       return;
@@ -126,12 +176,9 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
       return;
     }
 
-    const { convId } = getOrCreateConversation({
-      targetItem: item,
-      currentUser,
-    });
-
-    onNavigate('chat', { conversationId: convId });
+    // Karena tidak ada pembuatan chat conversation spesifik di frontend,
+    // kita akan arahkan ke halaman chat, lalu komponen Chat yang akan handle konversasi
+    onNavigate('chat', { targetUserId: item.id_pemilik, targetItemId: item.id });
   };
 
   // Handler klik tombol "Ajak COD via Chat"
@@ -145,15 +192,14 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
       return;
     }
 
-    const codMessage = `Halo kak ${sellerName}, saya tertarik dengan barang "${item.nama}". Apakah bisa ketemuan langsung untuk cek barang & COD di area ${item.lokasi}?`;
+    const codMessage = `Halo kak ${sellerName}, saya tertarik dengan barang "${item.nama_barang}". Apakah bisa ketemuan langsung untuk cek barang & COD di area ${item.lokasi}?`;
 
-    const { convId } = getOrCreateConversation({
-      targetItem: item,
-      currentUser,
-      initialMessage: codMessage,
+    // Kirim initialMessage lewat params ke halaman chat
+    onNavigate('chat', { 
+      targetUserId: item.id_pemilik, 
+      targetItemId: item.id,
+      initialMessage: codMessage 
     });
-
-    onNavigate('chat', { conversationId: convId });
   };
 
   // Handler klik tombol "Simpan ke Keranjang"
@@ -162,35 +208,9 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
       openAuthModal('login');
       return;
     }
-    const currentDB = getDB();
-    if (!Array.isArray(currentDB.cart)) currentDB.cart = [];
-
-    const alreadyInCart = currentDB.cart.some(
-      c => c.id_user === currentUser.id && c.id_item === item.id
-    );
-
-    if (alreadyInCart) {
-      showToast('Barang ini sudah ada di keranjangmu');
-      return;
-    }
-
-    const newCartItem = {
-      id: generateId('CRT', currentDB.cart),
-      id_user: currentUser.id,
-      id_item: item.id,
-      ditambahkan_pada: new Date().toLocaleDateString('id-ID', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      }),
-    };
-
-    currentDB.cart.unshift(newCartItem);
-    saveDB(currentDB);
-    showToast('✓ Berhasil disimpan ke keranjang!');
-    if (onCartUpdated) {
-      onCartUpdated();
-    }
+    
+    // TODO: Buat endpoint backend cartService.addToCart(userId, itemId)
+    showToast('✓ Keranjang akan terhubung ke backend pada update berikutnya!');
   };
 
   return (
@@ -218,7 +238,7 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
           {item.kategori}
         </button>
         <span>/</span>
-        <span className="text-gray-900 font-medium truncate max-w-xs">{item.nama}</span>
+        <span className="text-gray-900 font-medium truncate max-w-xs">{item.nama_barang}</span>
       </nav>
 
       {/* Card Utama */}
@@ -229,7 +249,7 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
             <div className="aspect-square w-full rounded-2xl overflow-hidden bg-gray-50 border border-gray-100 flex items-center justify-center p-2 relative shadow-xs">
               <img
                 src={item.foto}
-                alt={item.nama}
+                alt={item.nama_barang}
                 className="w-full h-full object-contain"
                 onError={e => {
                   (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
@@ -282,7 +302,7 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
 
             {/* Judul Produk */}
             <h1 className="text-xl md:text-2xl font-bold text-gray-900 leading-snug">
-              {item.nama}
+              {item.nama_barang}
             </h1>
 
             {/* Info Rating Penjual & Kategori */}
@@ -515,14 +535,14 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
                 <div className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 border border-gray-100">
                   <img
                     src={item.foto}
-                    alt={item.nama}
+                    alt={item.nama_barang}
                     className="w-10 h-10 rounded-lg object-contain bg-white p-1"
                     onError={e => {
                       (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
                     }}
                   />
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-gray-900 truncate">{item.nama}</p>
+                    <p className="text-xs font-bold text-gray-900 truncate">{item.nama_barang}</p>
                     <p className="text-xs text-emerald-800 font-semibold">
                       Rp {item.harga.toLocaleString('id-ID')}
                     </p>
@@ -571,14 +591,14 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
                         >
                           <img
                             src={myItem.foto}
-                            alt={myItem.nama}
+                            alt={myItem.nama_barang}
                             className="w-10 h-10 rounded-lg object-cover bg-gray-100"
                             onError={e => {
                               (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
                             }}
                           />
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-semibold text-gray-900 truncate">{myItem.nama}</p>
+                            <p className="text-xs font-semibold text-gray-900 truncate">{myItem.nama_barang}</p>
                             <div className="flex items-center gap-2 mt-0.5 text-[11px]">
                               <span className="font-bold text-gray-800">
                                 Rp {myItem.harga.toLocaleString('id-ID')}
@@ -613,12 +633,16 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
                 </button>
                 <button
                   type="button"
-                  disabled={!selectedMyItemId}
+                  disabled={!selectedMyItemId || isSubmitting}
                   onClick={handleConfirmBarter}
-                  className="flex-1 py-2.5 font-medium text-xs text-white rounded-xl transition-all disabled:opacity-40 cursor-pointer shadow-xs"
+                  className="flex-1 py-2.5 font-medium text-xs text-white rounded-xl transition-all disabled:opacity-40 cursor-pointer shadow-xs flex items-center justify-center"
                   style={{ background: 'var(--color-primary)' }}
                 >
-                  Kirim Tawaran Barter
+                  {isSubmitting ? (
+                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                  ) : (
+                    'Kirim Tawaran Barter'
+                  )}
                 </button>
               </div>
             </div>

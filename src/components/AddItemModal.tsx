@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getDB, saveDB } from '../services/db';
-import { Item } from '../types/database';
+import { itemService } from '../services/db';
 
 interface AddItemModalProps {
   isOpen: boolean;
@@ -34,7 +33,7 @@ const PHOTO_PRESETS = [
 
 /**
  * Kompres dan resize gambar ke lebar maksimal (default 800px) menggunakan Canvas,
- * lalu kembalikan string base64 data URL untuk disimpan secara hemat di localStorage.
+ * lalu kembalikan string base64 data URL untuk disimpan secara hemat.
  */
 function compressImage(file: File, maxWidth = 800, quality = 0.8): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -102,6 +101,7 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
   const [photoSource, setPhotoSource] = useState<'upload' | 'preset' | 'url'>('upload');
   const [uploadedFileName, setUploadedFileName] = useState('');
   const [isCompressing, setIsCompressing] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<'jual' | 'barter' | 'keduanya'>('keduanya');
   const [lokasi, setLokasi] = useState('');
@@ -149,7 +149,7 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -168,45 +168,43 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
       return;
     }
 
-    const db = getDB();
-    const existingNums = db.items
-      .map(i => parseInt(i.id.replace('ITM-', ''), 10))
-      .filter(n => !isNaN(n));
-    const nextNumber = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
-    const newId = `ITM-${String(nextNumber).padStart(3, '0')}`;
+    setIsSubmitting(true);
+    try {
+      const itemPayload = {
+        nama_barang: nama.trim(),
+        kategori: String(kategori).trim(),
+        harga: Number(harga),
+        kondisi,
+        foto: foto.trim() || '/assets/seed-images/placeholder.svg',
+        status,
+        id_pemilik: currentUser.id,
+        lokasi: lokasi.trim() || currentUser.lokasi || 'Sekaran, Gunungpati',
+        deskripsi: deskripsi.trim() || 'Tidak ada deskripsi.',
+      };
 
-    const newItem: Item = {
-      id: newId,
-      nama: nama.trim(),
-      kategori: String(kategori).trim(),
-      harga: Number(harga),
-      kondisi,
-      foto: foto.trim() || '/assets/seed-images/placeholder.svg',
-      status,
-      id_pemilik: currentUser.id,
-      lokasi: lokasi.trim() || currentUser.lokasi || 'Sekaran, Gunungpati',
-      deskripsi: deskripsi.trim() || 'Tidak ada deskripsi.',
-    };
+      await itemService.createItem(itemPayload);
 
-    // Tambahkan di awal agar langsung muncul paling atas
-    db.items.unshift(newItem);
-    saveDB(db);
-
-    setShowToast(true);
-    setTimeout(() => {
-      setShowToast(false);
-      onItemAdded?.();
-      onClose();
-      // Reset form
-      setNama('');
-      setHarga('');
-      setKategori(CATEGORIES[0]);
-      setDeskripsi('');
-      setFoto('/assets/seed-images/placeholder.svg');
-      setUploadedFileName('');
-      setPhotoSource('upload');
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }, 900);
+      setShowToast(true);
+      setTimeout(() => {
+        setShowToast(false);
+        onItemAdded?.();
+        onClose();
+        // Reset form
+        setNama('');
+        setHarga('');
+        setKategori(CATEGORIES[0]);
+        setDeskripsi('');
+        setFoto('/assets/seed-images/placeholder.svg');
+        setUploadedFileName('');
+        setPhotoSource('upload');
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }, 900);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Gagal menambahkan barang ke server.';
+      setErrorMsg(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -238,7 +236,7 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
           </div>
           <button
             onClick={onClose}
-            className="text-white/80 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10"
+            className="text-white/80 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10 cursor-pointer"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -361,7 +359,7 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
                   type="button"
                   key={opt.id}
                   onClick={() => setStatus(opt.id as 'jual' | 'barter' | 'keduanya')}
-                  className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center ${
+                  className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
                     status === opt.id
                       ? 'border-[var(--color-primary)] bg-[#567257]/15 text-[var(--color-primary)]'
                       : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
@@ -557,17 +555,22 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-2.5 rounded-xl border font-bold text-xs text-gray-600 hover:bg-black/5 transition-colors"
+              className="flex-1 py-2.5 rounded-xl border font-bold text-xs text-gray-600 hover:bg-black/5 transition-colors cursor-pointer"
               style={{ borderColor: 'var(--color-border)' }}
             >
               Batal
             </button>
             <button
               type="submit"
-              className="flex-1 py-2.5 rounded-xl text-white font-bold text-xs shadow-sm transition-all hover:opacity-90 active:scale-[0.99]"
+              disabled={isSubmitting}
+              className="flex-1 py-2.5 rounded-xl text-white font-bold text-xs shadow-sm transition-all hover:opacity-90 active:scale-[0.99] disabled:opacity-50 flex items-center justify-center cursor-pointer"
               style={{ background: 'var(--color-accent)' }}
             >
-              Pasang Iklan Sekarang
+              {isSubmitting ? (
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+              ) : (
+                'Pasang Iklan Sekarang'
+              )}
             </button>
           </div>
         </form>
