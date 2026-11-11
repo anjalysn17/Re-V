@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
+const { randomUUID } = require('crypto');
 
 // GET /api/chat/conversations/:userId - Ambil semua kamar obrolan milik user beserta detail partner & item terkait
 router.get('/conversations/:userId', async (req, res) => {
@@ -109,8 +110,7 @@ router.post('/messages', async (req, res) => {
           await db.query(`UPDATE conversations SET id_item_terkait = ? WHERE id = ?`, [targetItemId, targetConvId]);
         }
       } else {
-        targetConvId = `CONV-${Date.now().toString().slice(-5)}`;
-        await db.query(
+        targetConvId = `CONV-${randomUUID().slice(0, 8)}`; await db.query(
           `INSERT INTO conversations (id, id_user_a, id_user_b, id_item_terkait) VALUES (?, ?, ?, ?)`,
           [targetConvId, id_pengirim, targetUserId, targetItemId || null]
         );
@@ -121,8 +121,7 @@ router.post('/messages', async (req, res) => {
       return res.status(400).json({ success: false, message: 'id_conversation atau targetUserId wajib diisi' });
     }
 
-    const msgId = id || `MSG-${Date.now().toString().slice(-5)}`;
-    const timeStr = waktu || new Date().toLocaleTimeString('id-ID', {
+    const msgId = id || `MSG-${randomUUID().slice(0, 8)}`; const timeStr = waktu || new Date().toLocaleTimeString('id-ID', {
       timeZone: 'Asia/Jakarta',
       hour: '2-digit',
       minute: '2-digit'

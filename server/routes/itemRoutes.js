@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
+const { randomUUID } = require('crypto');
 
 // GET /api/items - Ambil semua barang beserta informasi pemiliknya
 router.get('/', async (req, res) => {
@@ -52,8 +53,7 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    const itemId = id || `ITM-${Date.now().toString().slice(-5)}`;
-    // Menyesuaikan status kiriman frontend ('jual', 'barter', 'keduanya') atau default 'keduanya'
+    const itemId = id || `ITM-${randomUUID().slice(0, 8)}`;    // Menyesuaikan status kiriman frontend ('jual', 'barter', 'keduanya') atau default 'keduanya'
     const itemStatus = status || 'keduanya';
     const itemLokasi = lokasi || 'Sekaran, Gunungpati';
 
@@ -61,15 +61,15 @@ router.post('/', async (req, res) => {
       `INSERT INTO items (id, id_pemilik, nama_barang, deskripsi, harga, kategori, kondisi, foto, status, lokasi)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        itemId, 
-        id_pemilik, 
-        nama_barang, 
-        deskripsi || '', 
-        Number(harga) || 0, 
-        kategori, 
-        kondisi || 'Grade A', 
-        foto || '', 
-        itemStatus, 
+        itemId,
+        id_pemilik,
+        nama_barang,
+        deskripsi || '',
+        Number(harga) || 0,
+        kategori,
+        kondisi || 'Grade A',
+        foto || '',
+        itemStatus,
         itemLokasi
       ]
     );

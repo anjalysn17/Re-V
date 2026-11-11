@@ -209,7 +209,25 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
       openAuthModal('login');
       return;
     }
-    showToast('🛒 Keranjang akan terhubung ke backend pada update berikutnya!');
+    
+    const cartKey = `rev_cart_${currentUser.id}`;
+    // Ambil keranjang yang sudah ada, atau buat array kosong jika belum ada
+    const cart = JSON.parse(localStorage.getItem(cartKey) || '[]');
+    
+    // Cek agar barang yang sama tidak masuk dua kali
+    if (!cart.find((c: any) => c.id_item === item.id)) {
+      cart.push({ 
+        id: `CRT-${Date.now()}`, 
+        id_item: item.id, 
+        ditambahkan_pada: new Date().toISOString() 
+      });
+      localStorage.setItem(cartKey, JSON.stringify(cart));
+      
+      if (onCartUpdated) onCartUpdated();
+      showToast('Barang berhasil disimpan ke keranjang!');
+    } else {
+      showToast('Barang ini sudah ada di keranjangmu.');
+    }
   };
 
   return (

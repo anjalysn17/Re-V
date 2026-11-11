@@ -1,12 +1,14 @@
 // Konfigurasi Base URL yang membaca variabel dari Vercel atau .env.development
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
-// Helper untuk menyertakan header standar
+// Helper untuk menyertakan header standar dan token JWT
 const getHeaders = () => {
+  const token = localStorage.getItem('rev_token');
   return {
     'Content-Type': 'application/json',
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
   };
-};
+};  
 
 // ==========================================
 // 1. AUTH & USERS (Tabel: users)
@@ -171,8 +173,14 @@ export const chatService = {
         body: JSON.stringify(messageData),
       });
       const data = await res.json();
-      // PERBAIKAN DI SINI: Gunakan data.data.id
-      return data.success ? { ...messageData, id: data.data.id, waktu: data.data.waktu } : null;
+
+      // PERBAIKAN DI SINI: Tangkap conversationId dari data backend
+      return data.success ? {
+        ...messageData,
+        id: data.data.id,
+        waktu: data.data.waktu,
+        conversationId: data.conversationId // <--- Ini yang tadinya hilang
+      } : null;
     } catch (error) {
       console.error('Error sending message:', error);
       throw error;

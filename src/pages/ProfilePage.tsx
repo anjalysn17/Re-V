@@ -16,7 +16,7 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
 
   // State lokal untuk data diri
   const [profileData, setProfileData] = useState({
-    name: currentUser?.nama || currentUser?.name || 'Haikal Akhsan Darmawan',
+    name: currentUser?.nama || currentUser?.nama || 'Haikal Akhsan Darmawan',
     email: currentUser?.email || 'haikalakhsan@students.unnes.ac.id',
     phone: currentUser?.phone || '081234567890',
     location: currentUser?.lokasi || 'Sekaran, Gunungpati, Semarang',
@@ -27,7 +27,7 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
   useEffect(() => {
     if (currentUser) {
       setProfileData({
-        name: currentUser.nama || currentUser.name || 'Haikal Akhsan Darmawan',
+        name: currentUser.nama || currentUser.nama || 'Haikal Akhsan Darmawan',
         email: currentUser.email || 'haikalakhsan@students.unnes.ac.id',
         phone: currentUser.phone || '081234567890',
         location: currentUser.lokasi || 'Sekaran, Gunungpati, Semarang',

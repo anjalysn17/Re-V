@@ -161,7 +161,13 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
         lokasi: lokasi.trim() || currentUser.lokasi || 'Sekaran, Gunungpati',
         deskripsi: deskripsi.trim() || 'Tidak ada deskripsi.',
       };
-      await itemService.createItem(itemPayload);
+      const res = await itemService.createItem(itemPayload);
+
+      // Cek apakah server membalas dengan status gagal
+      if (res && !res.success) {
+        throw new Error(res.message || 'Gagal menambahkan barang ke server.');
+      }
+
       setShowToast(true);
       setTimeout(() => {
         setShowToast(false);
@@ -328,11 +334,10 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
                   type="button"
                   key={opt.id}
                   onClick={() => setStatus(opt.id as 'jual' | 'barter' | 'keduanya')}
-                  className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
-                    status === opt.id
+                  className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${status === opt.id
                       ? 'border-[var(--color-primary)] bg-[#567257]/15 text-[var(--color-primary)]'
                       : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
-                  }`}
+                    }`}
                 >
                   {opt.label}
                 </button>
@@ -355,11 +360,10 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
                   type="button"
                   key={tab.id}
                   onClick={() => setPhotoSource(tab.id as 'upload' | 'preset' | 'url')}
-                  className={`py-1.5 px-2 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
-                    photoSource === tab.id
+                  className={`py-1.5 px-2 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${photoSource === tab.id
                       ? 'border-[var(--color-primary)] bg-[#567257]/15 text-[var(--color-primary)]'
                       : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
-                  }`}
+                    }`}
                 >
                   {tab.label}
                 </button>
@@ -418,11 +422,10 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
                         setFoto(p.url);
                         setUploadedFileName('');
                       }}
-                      className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                        foto === p.url
+                      className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer ${foto === p.url
                           ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/15 text-[var(--color-accent)] font-bold'
                           : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
-                      }`}
+                        }`}
                     >
                       {p.label}
                     </button>

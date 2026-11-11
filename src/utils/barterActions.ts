@@ -52,26 +52,33 @@ export async function createOfferAndConversation({
 
     // Jika belum ada percakapan, backend chat secara otomatis akan menangani atau bisa dikirim pesan pertama
     const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-    const itemNameMy = myItem.nama_barang || myItem.name || 'Barang';
-    const itemNameTarget = targetItem.nama_barang || targetItem.name || 'Barang';
+    const itemNameMy = myItem.nama_barang || myItem.nama || 'Barang';
+    const itemNameTarget = targetItem.nama_barang || targetItem.nama || 'Barang';
     
     const offerMsgText = `Tawaran Barter Resmi\n\nSaya tawarkan: ${itemNameMy} (Rp ${(myItem.harga || 0).toLocaleString('id-ID')})\nUntuk: ${itemNameTarget} (Rp ${(targetItem.harga || 0).toLocaleString('id-ID')})\nEstimasi selisih: Rp ${priceDiff.toLocaleString('id-ID')}`;
 
-    if (convId) {
-      await chatService.sendMessage({
-        id_conversation: convId,
-        id_pengirim: currentUser.id,
-        teks: offerMsgText,
-        waktu: timeStr,
-        type: 'offer',
-      });
+    // Kirim pesan tawaran (buat room baru jika belum ada)
+    const msgRes = await chatService.sendMessage({
+      id_conversation: convId || undefined,
+      targetUserId: targetItem.id_pemilik,
+      targetItemId: targetItem.id,
+      id_pengirim: currentUser.id,
+      teks: offerMsgText,
+      waktu: timeStr,
+      type: 'offer',
+    });
+
+    if (msgRes && msgRes.conversationId) {
+      convId = msgRes.conversationId;
     }
 
     return {
       success: true,
       convId: convId || 'CONV-NEW',
-      offerId: offerResult.offerId || 'OFR-NEW',
+      offerId: offerResult.offerId || offerResult.data?.id || 'OFR-NEW',
     };
+
+    
   } catch (error: any) {
     console.error('Error in createOfferAndConversation:', error);
     return { success: false, message: error.message || 'Terjadi kesalahan sistem saat memproses barter.' };
@@ -105,15 +112,22 @@ export async function getOrCreateConversation({
     let convId = conv ? conv.id : null;
 
     // Jika pesan pembuka/ajakan COD diberikan, kirimkan sebagai pesan baru
-    if (initialMessage && initialMessage.trim() && convId) {
+    if (initialMessage && initialMessage.trim()) {
       const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-      await chatService.sendMessage({
-        id_conversation: convId,
+      const msgRes = await chatService.sendMessage({
+        id_conversation: convId || undefined, // undefined agar backend otomatis buatkan ID
+        targetUserId: targetItem.id_pemilik,
+        targetItemId: targetItem.id,
         id_pengirim: currentUser.id,
         teks: initialMessage.trim(),
         waktu: timeStr,
         type: 'text',
       });
+      
+      // Ambil ID obrolan baru dari respons backend
+      if (msgRes && msgRes.conversationId) {
+        convId = msgRes.conversationId;
+      }
     }
 
     return { success: true, convId: convId || 'CONV-NEW' };

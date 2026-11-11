@@ -1,4 +1,5 @@
 const mysql = require('mysql2/promise');
+const bcrypt = require('bcrypt');
 require('dotenv').config();
 
 const dbConfig = {
@@ -134,19 +135,24 @@ async function initTables() {
       )
     `);
 
-    // 9. Seed Akun Admin Resmi
+    // 2. Tambahkan baris ini untuk otomatis memperbaiki tabel di Railway yang terlanjur salah struktur
+    try { await pool.query("ALTER TABLE items MODIFY COLUMN status ENUM('jual', 'barter', 'keduanya', 'tersedia', 'terjual') DEFAULT 'keduanya'"); } catch (e) { }
+    try { await pool.query("ALTER TABLE messages MODIFY COLUMN type ENUM('text', 'offer', 'system') DEFAULT 'text'"); } catch (e) { }
+    try { await pool.query("ALTER TABLE users ADD COLUMN phone VARCHAR(50) DEFAULT ''"); } catch (e) { }
+
+    // 3. Hash password admin sebelum di-insert
+    const hashedAdminPassword = await bcrypt.hash(process.env.ADMIN_PASSWORD || 'admin123', 10);
+
     await pool.query(`
       INSERT IGNORE INTO users (id, nama, email, password, foto_profil, lokasi, rating, role)
-      VALUES ('USR-000', 'Admin RE:V', 'admin@techno.ac.id', 'admin123', '/assets/seed-images/avatar-placeholder.svg', 'Kampus UNNES Gunungpati', 5.0, 'admin')
-    `);
+      VALUES ('USR-000', 'Admin RE:V', 'admin@techno.ac.id', ?, '/assets/seed-images/avatar-placeholder.svg', 'Kampus UNNES Gunungpati', 5.0, 'admin')
+    `, [hashedAdminPassword]);
 
-    console.log('✅ Seluruh Tabel MySQL RE:V & Akun Admin berhasil diperiksa dan diinisialisasi!');
+    console.log('  Seluruh Tabel MySQL RE:V & Akun Admin berhasil diperiksa dan diinisialisasi!');
   } catch (error) {
-    console.error('❌ Gagal menginisialisasi database/tabel MySQL:', error.message);
+    console.error('  Gagal menginisialisasi database/tabel MySQL:', error.message);
   }
 }
 
-// Panggil fungsi inisialisasi tabel saat modul dimuat
-initTables();
-
-module.exports = pool;
+// 4. Ubah export-nya menjadi object agar initTables bisa dipanggil dan ditunggu (await) di index.js
+module.exports = { pool, initTables };

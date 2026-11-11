@@ -50,6 +50,8 @@ function MainLayout() {
   const [page, setPage] = useState<Page>('home');
   const [selectedCategory, setSelectedCategory] = useState<string>('Elektronik');
   const [selectedConversationId, setSelectedConversationId] = useState<string | undefined>(undefined);
+  const [selectedTargetUserId, setSelectedTargetUserId] = useState<string | undefined>(undefined);
+  const [selectedTargetItemId, setSelectedTargetItemId] = useState<string | undefined>(undefined);
   const [selectedProductId, setSelectedProductId] = useState<string | undefined>(undefined);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isAddItemOpen, setIsAddItemOpen] = useState(false);
@@ -65,6 +67,8 @@ function MainLayout() {
       if (params.productId) setSelectedProductId(params.productId);
       if (params.conversationId) setSelectedConversationId(params.conversationId);
       if (params.searchQuery !== undefined) setSearchQuery(params.searchQuery);
+      if (params.targetUserId) setSelectedTargetUserId(params.targetUserId);
+      if (params.targetItemId) setSelectedTargetItemId(params.targetItemId);
     } else if (typeof params === 'string') {
       if (p === 'category') setSelectedCategory(params);
       if (p === 'product') setSelectedProductId(params);
@@ -81,8 +85,10 @@ function MainLayout() {
     (window as any).revNavigate = navigate;
   }, []);
 
-  // Hitung jumlah item keranjang jika diperlukan, atau set 0/ambil dari backend
-  const cartCount = 0;
+  // Hitung jumlah item keranjang dengan membaca localStorage milik user yang sedang login
+  const cartCount = currentUser 
+    ? (JSON.parse(localStorage.getItem(`rev_cart_${currentUser.id}`) || '[]')).length 
+    : 0;
 
   return (
     <div className="min-h-screen relative" style={{ background: 'var(--color-bg)', fontFamily: 'var(--font-body)' }}>
@@ -140,6 +146,8 @@ function MainLayout() {
           <ChatPage
             key={`${refreshKey}-${selectedConversationId || 'default'}`}
             openConversationId={selectedConversationId}
+            targetUserId={selectedTargetUserId} // Tambahan baru
+            targetItemId={selectedTargetItemId} // Tambahan baru
             onNavigate={navigate}
           />
         )}

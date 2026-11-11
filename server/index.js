@@ -39,8 +39,10 @@ const pool = require('./config/db');
     console.log('Koneksi Database MySQL berhasil diverifikasi.');
 
     // Nyalakan server setelah database dan tabel siap
-    app.listen(PORT, () => {
-      console.log(`Server RE:V Backend berjalan di port ${PORT}`);
+    initTables().then(() => {
+      app.listen(process.env.PORT || 5000, () => {
+        console.log(`Server siap dan berjalan!`);
+      });
     });
   } catch (error) {
     console.error('Gagal menyalakan server karena masalah database:', error.message);

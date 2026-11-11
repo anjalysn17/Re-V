@@ -55,6 +55,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setCurrentUser(user);
       localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+      if (response.token) {
+        localStorage.setItem('rev_token', response.token);
+      }
       setIsAuthModalOpen(false);
 
       return { success: true, user };
@@ -71,6 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = () => {
     setCurrentUser(null);
     localStorage.removeItem(CURRENT_USER_KEY);
+    localStorage.removeItem('rev_token'); // <--- Tambahkan baris ini
   };
 
   // Fungsi Register async terhubung ke backend Railway API (/api/auth/register)
@@ -96,6 +100,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setCurrentUser(newUser);
       localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(newUser));
+      if (response.token) {
+        localStorage.setItem('rev_token', response.token);
+      }
       setIsAuthModalOpen(false);
 
       return { success: true, user: newUser };

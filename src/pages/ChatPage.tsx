@@ -5,10 +5,12 @@ import { APP_NAME } from '../constants/brand';
 
 interface ChatPageProps {
   openConversationId?: string;
+  targetUserId?: string; // <--- Tambahkan ini
+  targetItemId?: string; // <--- Tambahkan ini
   onNavigate?: (page: string, param?: any) => void;
 }
 
-export default function ChatPage({ openConversationId, onNavigate }: ChatPageProps) {
+export default function ChatPage({ openConversationId, targetUserId, targetItemId, onNavigate }: ChatPageProps) {
   const { currentUser, openAuthModal } = useAuth();
   const [conversations, setConversations] = useState<any[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(openConversationId || null);
@@ -64,21 +66,42 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const activeConversation = useMemo(() => {
-    return conversations.find(c => c.id === activeConvId) || null;
-  }, [conversations, activeConvId]);
+ const activeConversation = useMemo(() => {
+    const found = conversations.find(c => c.id === activeConvId);
+    if (found) return found;
+    
+    // Jika kita sedang membuat obrolan baru dari halaman produk
+    if (activeConvId === 'CONV-NEW' || (targetUserId && !activeConvId)) {
+      return {
+        id: 'CONV-NEW',
+        otherUser: { nama: 'Memulai Obrolan Baru...', foto_profil: '/assets/seed-images/avatar-placeholder.svg', rating: 5.0, lokasi: '-' },
+        relatedItem: null
+      };
+    }
+    return null;
+  }, [conversations, activeConvId, targetUserId]);
 
   const sendMessage = async (text: string, type: 'text' | 'offer' | 'system' = 'text') => {
-    if (!text.trim() || !activeConvId || !currentUser) return;
+    if (!text.trim() || !currentUser) return; // Hapus syarat activeConvId agar bisa buat room baru
+    
     try {
+      const isNewConv = activeConvId === 'CONV-NEW' || !activeConvId;
+      
       const newMessage = {
-        id_conversation: activeConvId,
+        id_conversation: isNewConv ? undefined : activeConvId,
+        targetUserId: isNewConv ? targetUserId : undefined,
+        targetItemId: isNewConv ? targetItemId : undefined,
         id_pengirim: currentUser.id,
         teks: text.trim(),
         type,
       };
+
       const sentMsg = await chatService.sendMessage(newMessage);
       if (sentMsg) {
+        // Ganti ID percakapan dari CONV-NEW menjadi ID asli dari database
+        if (isNewConv && sentMsg.conversationId) {
+          setActiveConvId(sentMsg.conversationId);
+        }
         setMessages(prev => [...prev, sentMsg]);
         setInput('');
       }
@@ -86,7 +109,6 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
       console.error("Gagal mengirim pesan:", error);
     }
   };
-
   // 2. KONDISI LOGIN AMAN DILAKUKAN SETELAH SEMUA HOOKS DIPANGGIL
   if (!currentUser) {
     return (
