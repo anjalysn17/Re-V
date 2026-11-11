@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getDB } from '../services/db';
+import { itemService } from '../services/db';
 import { Item } from '../types/database';
 import { APP_NAME } from '../constants/brand';
 
@@ -12,15 +12,27 @@ interface MyItemsPageProps {
 export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPageProps) {
   const { currentUser, openAuthModal } = useAuth();
   const [items, setItems] = useState<Item[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (currentUser) {
-      const db = getDB();
-      const myItems = db.items.filter(item => item.id_pemilik === currentUser.id);
-      setItems(myItems);
-    } else {
-      setItems([]);
-    }
+    const fetchMyItems = async () => {
+      if (!currentUser) {
+        setItems([]);
+        setIsLoading(false);
+        return;
+      }
+      setIsLoading(true);
+      try {
+        const allItems = await itemService.getAllItems();
+        const myItems = allItems.filter((item: Item) => item.id_pemilik === currentUser.id);
+        setItems(myItems);
+      } catch (error) {
+        console.error("Gagal memuat barang saya:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchMyItems();
   }, [currentUser]);
 
   if (!currentUser) {
@@ -51,7 +63,6 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
 
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-6 space-y-6">
-      {/* Header Halaman */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-4" style={{ borderColor: 'var(--color-border)' }}>
         <div>
           <h1 className="text-2xl font-black text-gray-900" style={{ fontFamily: 'var(--font-display)' }}>
@@ -61,7 +72,6 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
             Daftar barang yang kamu iklankan di {APP_NAME} ({items.length} barang)
           </p>
         </div>
-
         <button
           onClick={onOpenAddItem}
           className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold text-white shadow-sm transition-all hover:opacity-90 active:scale-95 shrink-0"
@@ -74,8 +84,9 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
         </button>
       </div>
 
-      {/* Konten Daftar Barang */}
-      {items.length === 0 ? (
+      {isLoading ? (
+        <div className="py-16 text-center text-gray-500 text-sm">Memuat daftar barang Anda...</div>
+      ) : items.length === 0 ? (
         <div
           className="p-12 rounded-2xl border text-center space-y-4"
           style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
@@ -99,73 +110,67 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {items.map(item => (
-            <div
-              key={item.id}
-              className="rounded-2xl border overflow-hidden flex flex-col justify-between shadow-xs hover:shadow-md transition-shadow"
-              style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
-            >
-              <div>
-                <div className="relative aspect-square overflow-hidden bg-gray-100">
-                  <img
-                    src={item.foto}
-                    alt={item.nama}
-                    className="w-full h-full object-cover"
-                    onError={e => {
-                      (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
-                    }}
-                  />
-                  <div className="absolute top-2 left-2 flex flex-col gap-1">
-                    <span
-                      className="px-2 py-0.5 rounded-full text-[10px] font-bold text-white"
-                      style={{ background: 'var(--color-primary)' }}
+          {items.map(item => {
+            const itemName = item.nama_barang || item.nama;
+            return (
+              <div
+                key={item.id}
+                className="rounded-2xl border overflow-hidden flex flex-col justify-between shadow-xs hover:shadow-md transition-shadow"
+                style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
+              >
+                <div>
+                  <div className="relative aspect-square overflow-hidden bg-gray-100">
+                    <img
+                      src={item.foto}
+                      alt={itemName}
+                      className="w-full h-full object-cover"
+                      onError={e => {
+                        (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
+                      }}
+                    />
+                    <div className="absolute top-2 left-2 flex flex-col gap-1">
+                      <span
+                        className="px-2 py-0.5 rounded-full text-[10px] font-bold text-white"
+                        style={{ background: 'var(--color-primary)' }}
+                      >
+                        {item.kondisi}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-black/60 text-white">
+                        {item.status === 'keduanya' ? 'Jual & Barter' : item.status === 'barter' ? 'Barter' : 'Jual'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="p-3.5 space-y-1.5">
+                    <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">
+                      {item.kategori}
+                    </span>
+                    <h4 className="text-sm font-bold text-gray-900 line-clamp-2 leading-snug">
+                      {itemName}
+                    </h4>
+                    <p
+                      className="text-base font-black"
+                      style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-display)' }}
                     >
-                      {item.kondisi}
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-black/60 text-white">
-                      {item.status === 'keduanya' ? 'Jual & Barter' : item.status === 'barter' ? 'Barter' : 'Jual'}
-                    </span>
-                  </div>
-
-                  {/* Badge Ketersediaan */}
-                  <div className="absolute top-2 right-2">
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600 text-white shadow-xs">
-                      Tersedia
-                    </span>
+                      Rp {Number(item.harga).toLocaleString('id-ID')}
+                    </p>
+                    <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">
+                      {item.deskripsi}
+                    </p>
                   </div>
                 </div>
-
-                <div className="p-3.5 space-y-1.5">
-                  <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">
-                    {item.kategori}
-                  </span>
-                  <h4 className="text-sm font-bold text-gray-900 line-clamp-2 leading-snug">
-                    {item.nama}
-                  </h4>
-                  <p
-                    className="text-base font-black"
-                    style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-display)' }}
+                <div className="p-3.5 pt-0 border-t mt-2 flex items-center justify-between text-xs" style={{ borderColor: 'var(--color-border)' }}>
+                  <span className="text-[11px] text-gray-500">{item.lokasi}</span>
+                  <button
+                    onClick={() => onNavigate('product', { productId: item.id })}
+                    className="font-bold hover:underline text-xs"
+                    style={{ color: 'var(--color-primary)' }}
                   >
-                    Rp {item.harga.toLocaleString('id-ID')}
-                  </p>
-                  <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">
-                    {item.deskripsi}
-                  </p>
+                    Detail
+                  </button>
                 </div>
               </div>
-
-              <div className="p-3.5 pt-0 border-t mt-2 flex items-center justify-between text-xs" style={{ borderColor: 'var(--color-border)' }}>
-                <span className="text-[11px] text-gray-500">{item.lokasi}</span>
-                <button
-                  onClick={() => onNavigate('product', { productId: item.id })}
-                  className="font-bold hover:underline text-xs"
-                  style={{ color: 'var(--color-primary)' }}
-                >
-                  Detail →
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

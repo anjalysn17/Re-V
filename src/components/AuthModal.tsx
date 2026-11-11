@@ -15,35 +15,29 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
     login,
     register,
   } = useAuth();
-
+  
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-
-  // Register form state
   const [regNama, setRegNama] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regLokasi, setRegLokasi] = useState('');
   const [regPassword, setRegPassword] = useState('');
-
   const [errorMsg, setErrorMsg] = useState('');
-  const [isLoading, setIsLoading] = useState(false); // Tambahan state loading
+  const [isLoading, setIsLoading] = useState(false);
 
   if (!isAuthModalOpen) return null;
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
-    
+
     if (!identifier.trim() || !password) {
       setErrorMsg('Harap isi email/nama dan password.');
       return;
     }
-
     setIsLoading(true);
     try {
-      // Tunggu respon API via fungsi login() di context
       const res = await login(identifier, password);
-      
       if (!res.success) {
         setErrorMsg(res.message || 'Gagal masuk.');
       } else {
@@ -56,7 +50,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
           onLoginSuccess?.('user');
         }
       }
-    } catch (error) {
+    } catch {
       setErrorMsg('Terjadi kesalahan. Silakan coba lagi.');
     } finally {
       setIsLoading(false);
@@ -66,22 +60,19 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
-    
+
     if (!regNama.trim() || !regEmail.trim() || !regPassword) {
       setErrorMsg('Nama, email, dan password wajib diisi.');
       return;
     }
-
     setIsLoading(true);
     try {
-      // Tunggu respon API via fungsi register() di context
       const res = await register({
         nama: regNama,
         email: regEmail,
         lokasi: regLokasi,
         password: regPassword,
       });
-
       if (!res.success) {
         setErrorMsg(res.message || 'Gagal mendaftar.');
       } else {
@@ -92,7 +83,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
         setErrorMsg('');
         onLoginSuccess?.('user');
       }
-    } catch (error) {
+    } catch {
       setErrorMsg('Terjadi kesalahan jaringan. Silakan coba lagi.');
     } finally {
       setIsLoading(false);
@@ -130,7 +121,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
           </div>
           <button
             onClick={closeAuthModal}
-            className="text-white/80 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10"
+            className="text-white/80 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10 cursor-pointer"
             disabled={isLoading}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -149,7 +140,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
               }
             }}
             disabled={isLoading}
-            className={`flex-1 py-3 text-center transition-colors border-b-2 ${
+            className={`flex-1 py-3 text-center transition-colors border-b-2 cursor-pointer ${
               authModalMode === 'login'
                 ? 'border-[var(--color-accent)] text-[var(--color-accent)] font-bold'
                 : 'border-transparent text-gray-500 hover:text-gray-800'
@@ -165,7 +156,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
               }
             }}
             disabled={isLoading}
-            className={`flex-1 py-3 text-center transition-colors border-b-2 ${
+            className={`flex-1 py-3 text-center transition-colors border-b-2 cursor-pointer ${
               authModalMode === 'register'
                 ? 'border-[var(--color-accent)] text-[var(--color-accent)] font-bold'
                 : 'border-transparent text-gray-500 hover:text-gray-800'
@@ -193,13 +184,12 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                   type="text"
                   value={identifier}
                   onChange={e => setIdentifier(e.target.value)}
-                  placeholder="Contoh: haikal@students.unnes.ac.id atau Haikal"
+                  placeholder="Contoh: haikal@students.unnes.ac.id"
                   disabled={isLoading}
                   className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] disabled:opacity-50"
                   style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
                 />
               </div>
-
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1">Password</label>
                 <input
@@ -212,11 +202,10 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                   style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
                 />
               </div>
-
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full py-2.5 rounded-xl text-white font-bold text-sm shadow-sm transition-all hover:opacity-90 active:scale-[0.99] mt-2 flex justify-center items-center disabled:opacity-70 disabled:cursor-not-allowed"
+                className="w-full py-2.5 rounded-xl text-white font-bold text-sm shadow-sm transition-all hover:opacity-90 active:scale-[0.99] mt-2 flex justify-center items-center disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer"
                 style={{ background: 'var(--color-accent)' }}
               >
                 {isLoading ? (
@@ -240,7 +229,6 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                   style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
                 />
               </div>
-
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1">Email Mahasiswa</label>
                 <input
@@ -253,20 +241,18 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                   style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
                 />
               </div>
-
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1">Lokasi Kos / Kampus</label>
                 <input
                   type="text"
                   value={regLokasi}
                   onChange={e => setRegLokasi(e.target.value)}
-                  placeholder="Contoh: Sekaran, Banaran, atau Patemon"
+                  placeholder="Contoh: Sekaran, Banaran"
                   disabled={isLoading}
                   className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] disabled:opacity-50"
                   style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
                 />
               </div>
-
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1">Password</label>
                 <input
@@ -279,11 +265,10 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                   style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
                 />
               </div>
-
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full py-2.5 rounded-xl text-white font-bold text-sm shadow-sm transition-all hover:opacity-90 active:scale-[0.99] mt-2 flex justify-center items-center disabled:opacity-70 disabled:cursor-not-allowed"
+                className="w-full py-2.5 rounded-xl text-white font-bold text-sm shadow-sm transition-all hover:opacity-90 active:scale-[0.99] mt-2 flex justify-center items-center disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer"
                 style={{ background: 'var(--color-primary)' }}
               >
                 {isLoading ? (

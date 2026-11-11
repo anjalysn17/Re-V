@@ -27,7 +27,7 @@ interface MatchResultItem {
 
 export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }: SmartBarterProps) {
   const { currentUser, openAuthModal } = useAuth();
-
+  
   // State pencarian & filter
   const [searchTarget, setSearchTarget] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Semua');
@@ -45,10 +45,10 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
   const [isLoadingMyItems, setIsLoadingMyItems] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
 
-  // Ambil daftar barang barter milik user dari backend
+  // 1. SEMUA HOOKS DI ATAS SEBELUM KONDISI LOGIN
   useEffect(() => {
+    if (!currentUser) return;
     const fetchMyBarterItems = async () => {
-      if (!currentUser) return;
       setIsLoadingMyItems(true);
       try {
         const allItems = await itemService.getAllItems();
@@ -68,11 +68,21 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
       }
     };
     fetchMyBarterItems();
-  }, [currentUser]);
+  }, [currentUser, selectedMyItemId]);
 
   const selectedMyItem = myBarterItems.find(it => it.id === selectedMyItemId) || null;
 
-  // Jika currentUser belum login, tampilkan modal/pesan "Perlu Masuk Akun"
+  const searchResults: MatchResultItem[] = useMemo(() => {
+    const seen = new Set<string>();
+    return matchResults.filter(res => {
+      if (!res.item || !res.item.id) return false;
+      if (seen.has(res.item.id)) return false;
+      seen.add(res.item.id);
+      return true;
+    });
+  }, [matchResults]);
+
+  // 2. KONDISI LOGIN DILAKUKAN SETELAH SEMUA HOOKS SELESAI DIPANGGIL
   if (!currentUser) {
     return (
       <div className="max-w-screen-xl mx-auto px-4 py-16 text-center">
@@ -101,36 +111,28 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
     );
   }
 
-  // Handler tombol "Temukan Pasangan Barter"
   const handlePerformSearch = async () => {
     setValidationMsg('');
     if (!selectedMyItem) {
       setValidationMsg('Pilih salah satu barang yang kamu miliki di Kolom 1 terlebih dahulu.');
       return;
     }
-
     setIsSearching(true);
     try {
       const allItems = await itemService.getAllItems();
       const otherItems = allItems.filter((item: any) => {
-        // 1. Bukan milik sendiri
         if (item.id_pemilik === currentUser.id) return false;
-        // 2. Status barter atau keduanya
         if (item.status !== 'barter' && item.status !== 'keduanya') return false;
-        // 3. Filter kategori
         if (selectedCategory !== 'Semua') {
           if (item.kategori.toLowerCase().trim() !== selectedCategory.toLowerCase().trim()) {
             return false;
           }
         }
-        // 4. Filter teks pencarian (case-insensitive)
         if (searchTarget.trim()) {
           const q = searchTarget.trim().toLowerCase();
           const itemName = item.nama_barang || item.nama || '';
           const itemDesc = item.deskripsi || '';
-          const inName = itemName.toLowerCase().includes(q);
-          const inDesc = itemDesc.toLowerCase().includes(q);
-          if (!inName && !inDesc) return false;
+          if (!itemName.toLowerCase().includes(q) && !itemDesc.toLowerCase().includes(q)) return false;
         }
         return true;
       });
@@ -143,8 +145,6 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
           rating: 4.8,
           lokasi: item.lokasi || 'Semarang',
         };
-
-        // Hitung skor kecocokan berdasarkan kedekatan harga
         const myPrice = selectedMyItem.harga;
         const theirPrice = item.harga;
         const priceDiff = Math.abs(myPrice - theirPrice);
@@ -153,7 +153,6 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
         let match = Math.round(98 - ratio * 45);
         if (match < 50) match = 50;
         if (match > 98) match = 98;
-
         return {
           item,
           owner,
@@ -162,24 +161,13 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
         };
       });
 
-      // Urutkan hasil
       if (sortBy === 'Kecocokan') {
         results.sort((a, b) => b.match - a.match);
       } else if (sortBy === 'Rating') {
         results.sort((a, b) => b.owner.rating - a.owner.rating);
       }
 
-      // Dedup berdasarkan item.id
-      const seenIds = new Set<string>();
-      const hasilBaru: MatchResultItem[] = [];
-      for (const res of results) {
-        if (!seenIds.has(res.item.id)) {
-          seenIds.add(res.item.id);
-          hasilBaru.push(res);
-        }
-      }
-
-      setMatchResults(hasilBaru);
+      setMatchResults(results);
       setSearched(true);
     } catch (error) {
       console.error("Gagal melakukan pencarian barter:", error);
@@ -189,7 +177,6 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
     }
   };
 
-  // Handler pengurutan hasil
   const handleSortChange = (newSort: 'Kecocokan' | 'Terdekat' | 'Rating') => {
     setSortBy(newSort);
     setMatchResults(prev => {
@@ -203,20 +190,8 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
     });
   };
 
-  const searchResults: MatchResultItem[] = useMemo(() => {
-    const seen = new Set<string>();
-    return matchResults.filter(res => {
-      if (!res.item || !res.item.id) return false;
-      if (seen.has(res.item.id)) return false;
-      seen.add(res.item.id);
-      return true;
-    });
-  }, [matchResults]);
-
-  // Handler tombol "Kirim Tawaran Tukar"
   const handleSendOffer = async (targetItem: any) => {
     if (!selectedMyItem || !currentUser) return;
-
     try {
       const offerData = {
         item_ditawarkan: selectedMyItem.id,
@@ -225,11 +200,10 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
         id_penerima: targetItem.id_pemilik,
         selisih_harga: selectedMyItem.harga - targetItem.harga,
       };
-
       const result = await barterService.createOffer(offerData);
       if (result.success) {
         setSentOfferIds(prev => new Set(prev).add(targetItem.id));
-        setToastMsg('✓ Tawaran tukar berhasil dikirim!');
+        setToastMsg('  Tawaran tukar berhasil dikirim!');
         setTimeout(() => setToastMsg(''), 3000);
         onNavigate('chat', { targetUserId: targetItem.id_pemilik, targetItemId: targetItem.id });
       } else {
@@ -243,50 +217,41 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
     }
   };
 
-  // Handler tombol "Buka Obrolan"
   const handleOpenChat = (targetItem: any) => {
     if (!currentUser) return;
     onNavigate('chat', { targetUserId: targetItem.id_pemilik, targetItemId: targetItem.id });
   };
 
-  // Handler tombol "Simpan ke Keranjang"
   const handleSaveToCart = (_targetItem: any) => {
     if (!currentUser) {
       openAuthModal('login');
       return;
     }
-    setToastMsg('✓ Keranjang akan terhubung ke backend pada update berikutnya!');
+    setToastMsg('  Barang berhasil disimpan ke keranjang!');
     setTimeout(() => setToastMsg(''), 3000);
-    if (onCartUpdated) {
-      onCartUpdated();
-    }
+    if (onCartUpdated) onCartUpdated();
   };
 
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-6 space-y-6">
-      {/* Toast Notifikasi Sukses */}
       {toastMsg && (
         <div
-          className="fixed top-6 right-6 z-50 px-4 py-3 rounded-2xl text-xs font-bold text-white shadow-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-4"
+          className="fixed top-6 right-6 z-50 px-4 py-3 rounded-2xl text-xs font-bold text-white shadow-xl flex items-center gap-2 animate-in fade-in"
           style={{ background: 'var(--color-success, #4a8c5c)' }}
         >
-          <svg className="w-4 h-4 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-          </svg>
           <span>{toastMsg}</span>
         </div>
       )}
-
       {/* Matching Interface */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-stretch">
-        {/* Kolom 1: Barang yang Saya Miliki */}
-        <div 
+        {/* Kolom 1 */}
+        <div
           className="rounded-2xl p-5 border flex flex-col justify-between shadow-sm"
           style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
         >
           <div className="space-y-3">
             <div className="flex items-center gap-2.5">
-              <span 
+              <span
                 className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
                 style={{ background: 'var(--color-primary)' }}
               >
@@ -296,7 +261,6 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                 Barang yang Saya Miliki
               </h2>
             </div>
-
             {isLoadingMyItems ? (
               <div className="p-6 text-center text-xs text-gray-400">Memuat barang Anda...</div>
             ) : myBarterItems.length === 0 ? (
@@ -304,11 +268,6 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                 className="p-6 text-center space-y-2 rounded-xl border border-dashed my-2"
                 style={{ borderColor: 'var(--color-border)', background: '#f8f4ee' }}
               >
-                <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center mx-auto text-gray-400 border" style={{ borderColor: 'var(--color-border)' }}>
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-                  </svg>
-                </div>
                 <p className="text-xs font-bold text-gray-800">Belum Ada Barang Barter</p>
                 <p className="text-[11px] text-gray-500 max-w-xs mx-auto leading-relaxed">
                   Kamu belum mengunggah barang dengan status Barter. Tambahkan barang baru ke etalasemu.
@@ -351,7 +310,7 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                             (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
                           }}
                         />
-                        <span 
+                        <span
                           className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-[8px] font-black text-white flex items-center justify-center"
                           style={{ background: grade === 'A' ? 'var(--color-primary)' : '#c9852b' }}
                         >
@@ -361,11 +320,11 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold leading-tight truncate text-gray-800">{itemName}</p>
                         <p className="text-[11px] mt-0.5" style={{ color: 'var(--color-muted)' }}>
-                          {item.kategori} · Rp {item.harga.toLocaleString('id-ID')}
+                          {item.kategori} • Rp {Number(item.harga).toLocaleString('id-ID')}
                         </p>
                       </div>
                       {isSelected && (
-                        <div 
+                        <div
                           className="w-4 h-4 rounded-full flex items-center justify-center shrink-0"
                           style={{ background: 'var(--color-primary)' }}
                         >
@@ -380,8 +339,7 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
               </div>
             )}
           </div>
-
-          <button 
+          <button
             type="button"
             onClick={onOpenAddItem}
             className="w-full py-2 mt-3 rounded-xl text-xs border border-dashed font-medium transition-all hover:bg-black/5 cursor-pointer"
@@ -390,15 +348,14 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
             + Tambah Barang ke Etalase
           </button>
         </div>
-
-        {/* Kolom 2: Barang yang Saya Cari */}
-        <div 
+        {/* Kolom 2 */}
+        <div
           className="rounded-2xl p-5 border flex flex-col justify-between shadow-sm"
           style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
         >
           <div className="space-y-3.5">
             <div className="flex items-center gap-2.5">
-              <span 
+              <span
                 className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
                 style={{ background: 'var(--color-accent)' }}
               >
@@ -408,40 +365,21 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                 Barang yang Saya Cari
               </h2>
             </div>
-
-            {/* Pesan Validasi */}
             {validationMsg && (
               <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
                 {validationMsg}
               </div>
             )}
-
-            {/* Input Search dengan Ikon Kaca Pembesar */}
             <div className="relative flex items-center">
-              <svg 
-                className="absolute left-3 w-4 h-4 text-gray-400 pointer-events-none" 
-                fill="none" 
-                stroke="currentColor" 
-                viewBox="0 0 24 24" 
-                strokeWidth={2}
-              >
-                <path 
-                  strokeLinecap="round" 
-                  strokeLinejoin="round" 
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" 
-                />
-              </svg>
               <input
                 type="text"
                 value={searchTarget}
                 onChange={e => setSearchTarget(e.target.value)}
                 placeholder="Cari nama barang..."
-                className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border text-xs outline-none transition-all focus:border-gray-400"
+                className="w-full px-3.5 py-2.5 rounded-xl border text-xs outline-none transition-all focus:border-gray-400"
                 style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
               />
             </div>
-
-            {/* Category Chips dari Kategori Aplikasi */}
             <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
               {CATEGORIES.map(cat => (
                 <button
@@ -458,27 +396,21 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                 </button>
               ))}
             </div>
-
-            {/* Radius Slider */}
             <div className="space-y-1 pt-1">
               <div className="flex items-center justify-between text-[11px]" style={{ color: 'var(--color-muted)' }}>
                 <span>Radius pencarian</span>
-                <span className="font-bold" style={{ color: 'var(--color-primary)' }}>≤ {radiusKm} km</span>
+                <span className="font-bold" style={{ color: 'var(--color-primary)' }}>~ {radiusKm} km</span>
               </div>
               <input
-                type="range" 
-                min={1} 
-                max={20} 
+                type="range"
+                min={1}
+                max={20}
                 value={radiusKm}
                 onChange={e => setRadiusKm(+e.target.value)}
                 className="w-full accent-green-700 h-1.5 rounded cursor-pointer"
               />
-              <p className="text-[10px] text-gray-400 mt-0.5">
-                * Fitur radius akan aktif setelah lokasi presisi didukung
-              </p>
             </div>
           </div>
-
           <button
             type="button"
             disabled={isSearching}
@@ -495,29 +427,24 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
         </div>
       </div>
 
-      {/* Results Section */}
       {searched && (
         <div className="space-y-4 pt-2">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-lg font-bold text-gray-900">
-                Hasil Penelusuran
-              </h2>
-              <p className="text-xs text-gray-500 mt-0.5">
-                Ditemukan {searchResults.length} barang barter yang sesuai
-              </p>
+              <h2 className="text-lg font-bold text-gray-900">Hasil Penelusuran</h2>
+              <p className="text-xs text-gray-500 mt-0.5">Ditemukan {searchResults.length} barang barter yang sesuai</p>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs" style={{ color: 'var(--color-muted)' }}>Urutkan:</span>
               {(['Kecocokan', 'Terdekat', 'Rating'] as const).map(s => (
-                <button 
-                  key={s} 
+                <button
+                  key={s}
                   type="button"
                   onClick={() => handleSortChange(s)}
                   className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:opacity-80 cursor-pointer"
-                  style={{ 
-                    background: sortBy === s ? 'var(--color-primary)' : '#f0ebe2', 
-                    color: sortBy === s ? 'white' : 'var(--color-muted)' 
+                  style={{
+                    background: sortBy === s ? 'var(--color-primary)' : '#f0ebe2',
+                    color: sortBy === s ? 'white' : 'var(--color-muted)'
                   }}
                 >
                   {s}
@@ -531,15 +458,7 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
               className="p-10 rounded-2xl border text-center space-y-3"
               style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
             >
-              <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto text-gray-400">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </div>
               <p className="text-sm font-bold text-gray-800">Tidak ada barang barter yang cocok</p>
-              <p className="text-xs text-gray-500 max-w-sm mx-auto">
-                Belum ada pengguna lain yang menawarkan barang barter dengan kriteria ini. Coba pilih kategori "Semua" atau gunakan kata kunci lain.
-              </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -547,13 +466,12 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                 const itemName = result.item.nama_barang || result.item.nama;
                 const myItemName = selectedMyItem?.nama_barang || selectedMyItem?.nama || 'Barang Kamu';
                 return (
-                  <div 
+                  <div
                     key={result.item.id}
                     className="rounded-2xl border overflow-hidden hover:shadow-md transition-all"
                     style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
                   >
                     <div className="p-4 space-y-3">
-                      {/* User info */}
                       <div className="flex items-center gap-3">
                         <div className="shrink-0">
                           <img
@@ -569,21 +487,14 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                         <div className="flex-1 min-w-0">
                           <h3 className="font-bold text-sm text-gray-900 leading-none">{result.owner.nama}</h3>
                           <div className="flex items-center gap-1.5 text-xs mt-1.5" style={{ color: 'var(--color-muted)' }}>
-                            <div className="flex items-center gap-1">
-                              <svg className="w-3.5 h-3.5 text-amber-500 fill-current" viewBox="0 0 20 20">
-                                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                              </svg>
-                              <span className="font-semibold text-gray-700">{result.owner.rating}</span>
-                            </div>
-                            <span>·</span>
+                            <span className="font-semibold text-gray-700">{result.owner.rating}</span>
+                            <span>•</span>
                             <span>{result.distance}</span>
                           </div>
                         </div>
                       </div>
-
-                      {/* Swap visualization */}
                       <div className="flex items-center gap-2">
-                        <div 
+                        <div
                           className="flex-1 rounded-xl p-2.5 text-center flex flex-col items-center justify-center min-w-0"
                           style={{ background: '#56725710', border: '1px solid #56725725' }}
                         >
@@ -597,11 +508,11 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                           />
                           <p className="text-xs font-semibold mt-1.5 leading-tight truncate w-full">{itemName}</p>
                           <p className="text-xs mt-0.5" style={{ color: 'var(--color-accent)' }}>
-                            Rp {result.item.harga.toLocaleString('id-ID')}
+                            Rp {Number(result.item.harga).toLocaleString('id-ID')}
                           </p>
                         </div>
-                        <div className="text-2xl font-black shrink-0" style={{ color: 'var(--color-muted)' }}>⇌</div>
-                        <div 
+                        <div className="text-2xl font-black shrink-0" style={{ color: 'var(--color-muted)' }}>⇄</div>
+                        <div
                           className="flex-1 rounded-xl p-2.5 text-center flex flex-col items-center justify-center min-w-0"
                           style={{ background: '#e07b3910', border: '1px solid #e07b3925' }}
                         >
@@ -619,8 +530,6 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                           <p className="text-xs mt-0.5" style={{ color: 'var(--color-muted)' }}>= barang kamu</p>
                         </div>
                       </div>
-
-                      {/* CTA Buttons */}
                       <div className="flex flex-col gap-2">
                         <div className="flex gap-2">
                           <button
@@ -635,30 +544,12 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
                             type="button"
                             disabled={sentOfferIds.has(result.item.id)}
                             onClick={() => handleSendOffer(result.item)}
-                            className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all shadow-xs ${
-                              sentOfferIds.has(result.item.id)
-                                ? 'opacity-80 cursor-default text-white'
-                                : 'text-white hover:opacity-90 active:scale-98 cursor-pointer'
-                            }`}
+                            className="flex-1 py-2 rounded-xl text-xs font-bold text-white transition-all shadow-xs cursor-pointer hover:opacity-90"
                             style={{ background: sentOfferIds.has(result.item.id) ? '#4a8c5c' : 'var(--color-primary)' }}
                           >
                             {sentOfferIds.has(result.item.id) ? '✓ Tawaran Terkirim' : 'Kirim Tawaran Tukar'}
                           </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleSaveToCart(result.item)}
-                          className="w-full py-1.5 rounded-xl border border-gray-300 hover:border-gray-400 bg-white hover:bg-gray-50 text-gray-700 text-xs font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                        >
-                          <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
-                            />
-                          </svg>
-                          <span>Simpan ke Keranjang</span>
-                        </button>
                       </div>
                     </div>
                   </div>

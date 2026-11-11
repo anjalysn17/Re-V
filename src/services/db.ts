@@ -1,11 +1,10 @@
 // Konfigurasi Base URL yang membaca variabel dari Vercel atau .env.development
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
-// Helper untuk menyertakan header standar (bisa disesuaikan jika nanti pakai JWT/Token)
+// Helper untuk menyertakan header standar
 const getHeaders = () => {
   return {
     'Content-Type': 'application/json',
-    // 'Authorization': `Bearer ${localStorage.getItem('token')}` // Buka komentar ini jika pakai token
   };
 };
 
@@ -26,7 +25,6 @@ export const authService = {
       throw error;
     }
   },
-
   register: async (userData: any) => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
@@ -93,7 +91,7 @@ export const itemService = {
       console.error('Error deleting item:', error);
       throw error;
     }
-  }
+  },
 };
 
 // ==========================================
@@ -128,7 +126,7 @@ export const barterService = {
   updateOfferStatus: async (offerId: string, status: 'diterima' | 'ditolak') => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/barter/${offerId}/status`, {
-        method: 'PUT',
+        method: 'PATCH',
         headers: getHeaders(),
         body: JSON.stringify({ status }),
       });
@@ -137,7 +135,7 @@ export const barterService = {
       console.error('Error updating offer status:', error);
       throw error;
     }
-  }
+  },
 };
 
 // ==========================================
@@ -173,18 +171,54 @@ export const chatService = {
         headers: getHeaders(),
         body: JSON.stringify(messageData),
       });
-      return await res.json();
+      const data = await res.json();
+      // Mengembalikan data pesan baru agar langsung bisa dirender di frontend
+      return data.success ? { ...messageData, id: data.msgId, waktu: 'Baru saja' } : null;
     } catch (error) {
       console.error('Error sending message:', error);
       throw error;
     }
-  }
+  },
+
+  markAsRead: async (conversationId: string, userId: string) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/chat/conversations/${conversationId}/read`, {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify({ userId }),
+      });
+      return await res.json();
+    } catch (error) {
+      console.error('Error marking messages as read:', error);
+    }
+  },
 };
 
-// Ekspor default agar kompatibel jika ada file lama yang import secara keseluruhan
+// ==========================================
+// 5. KERANJANG (CART) & COMPATIBILITY LAYER
+// ==========================================
+// Layer kompatibilitas opsional jika masih ada komponen yang memanggil getDB/saveDB secara lokal
+export const getDB = () => {
+  try {
+    const local = localStorage.getItem('rev_fallback_db');
+    if (local) return JSON.parse(local);
+  } catch {}
+  return { users: [], items: [], offers: [], conversations: [], messages: [], notifications: [], cart: [] };
+};
+
+export const saveDB = (dbData: any) => {
+  try {
+    localStorage.setItem('rev_fallback_db', JSON.stringify(dbData));
+  } catch {}
+};
+
+export const generateId = (prefix: string, list: any[]) => {
+  return `${prefix}-${Date.now().toString().slice(-5)}`;
+};
+
 export default {
   auth: authService,
   items: itemService,
   barter: barterService,
-  chat: chatService
+  chat: chatService,
 };

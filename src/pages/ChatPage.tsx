@@ -10,7 +10,6 @@ interface ChatPageProps {
 
 export default function ChatPage({ openConversationId, onNavigate }: ChatPageProps) {
   const { currentUser, openAuthModal } = useAuth();
-  
   const [conversations, setConversations] = useState<any[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(openConversationId || null);
   const [messages, setMessages] = useState<any[]>([]);
@@ -22,7 +21,73 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Jika currentUser belum login, tampilkan kartu "Perlu Masuk Akun"
+  // 1. SEMUA HOOKS HARUS BERADA DI ATAS SEBELUM EARLY RETURN
+  useEffect(() => {
+    if (!currentUser) return;
+    const fetchConversations = async () => {
+      setIsLoadingConversations(true);
+      try {
+        const data = await chatService.getConversations(currentUser.id);
+        setConversations(data || []);
+        if (!activeConvId && data && data.length > 0) {
+          setActiveConvId(data[0].id);
+        }
+      } catch (error) {
+        console.error("Gagal mengambil daftar percakapan:", error);
+      } finally {
+        setIsLoadingConversations(false);
+      }
+    };
+    fetchConversations();
+  }, [currentUser, activeConvId]);
+
+  useEffect(() => {
+    if (!currentUser || !activeConvId) return;
+    const fetchMessages = async () => {
+      setIsLoadingMessages(true);
+      try {
+        const msgs = await chatService.getMessages(activeConvId);
+        setMessages(msgs || []);
+        if (chatService.markAsRead) {
+          await chatService.markAsRead(activeConvId, currentUser.id);
+        }
+      } catch (error) {
+        console.error("Gagal mengambil pesan:", error);
+      } finally {
+        setIsLoadingMessages(false);
+      }
+    };
+    fetchMessages();
+  }, [activeConvId, currentUser]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const activeConversation = useMemo(() => {
+    return conversations.find(c => c.id === activeConvId) || null;
+  }, [conversations, activeConvId]);
+
+  const sendMessage = async (text: string, type: 'text' | 'offer' | 'system' = 'text') => {
+    if (!text.trim() || !activeConvId || !currentUser) return;
+    try {
+      const newMessage = {
+        id_conversation: activeConvId,
+        id_pengirim: currentUser.id,
+        teks: text.trim(),
+        type,
+      };
+      const sentMsg = await chatService.sendMessage(newMessage);
+      if (sentMsg) {
+        setMessages(prev => [...prev, sentMsg]);
+        setInput('');
+      }
+    } catch (error) {
+      console.error("Gagal mengirim pesan:", error);
+    }
+  };
+
+  // 2. KONDISI LOGIN AMAN DILAKUKAN SETELAH SEMUA HOOKS DIPANGGIL
   if (!currentUser) {
     return (
       <div className="max-w-screen-xl mx-auto px-4 py-16 text-center">
@@ -51,82 +116,10 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
     );
   }
 
-  // Fetch daftar percakapan dari backend Railway
-  useEffect(() => {
-    const fetchConversations = async () => {
-      if (!currentUser) return;
-      setIsLoadingConversations(true);
-      try {
-        const data = await chatService.getConversations(currentUser.id);
-        setConversations(data || []);
-        if (!activeConvId && data && data.length > 0) {
-          setActiveConvId(data[0].id);
-        }
-      } catch (error) {
-        console.error("Gagal mengambil daftar percakapan:", error);
-      } finally {
-        setIsLoadingConversations(false);
-      }
-    };
-    fetchConversations();
-  }, [currentUser]);
-
-  // Fetch pesan dalam percakapan aktif dari backend Railway
-  useEffect(() => {
-    const fetchMessages = async () => {
-      if (!activeConvId) return;
-      setIsLoadingMessages(true);
-      try {
-        const msgs = await chatService.getMessages(activeConvId);
-        setMessages(msgs || []);
-        // Tandai pesan sudah dibaca
-        await chatService.markAsRead(activeConvId, currentUser.id);
-      } catch (error) {
-        console.error("Gagal mengambil pesan:", error);
-      } finally {
-        setIsLoadingMessages(false);
-      }
-    };
-    fetchMessages();
-  }, [activeConvId, currentUser]);
-
-  // Scroll otomatis ke pesan terbawah
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  // Percakapan aktif saat ini
-  const activeConversation = useMemo(() => {
-    return conversations.find(c => c.id === activeConvId) || null;
-  }, [conversations, activeConvId]);
-
-  // Handler kirim pesan baru ke backend
-  const sendMessage = async (text: string, type: 'text' | 'offer' | 'system' = 'text') => {
-    if (!text.trim() || !activeConvId || !currentUser) return;
-
-    try {
-      const newMessage = {
-        id_conversation: activeConvId,
-        id_pengirim: currentUser.id,
-        teks: text.trim(),
-        type,
-      };
-
-      const sentMsg = await chatService.sendMessage(newMessage);
-      if (sentMsg) {
-        setMessages(prev => [...prev, sentMsg]);
-        setInput('');
-      }
-    } catch (error) {
-      console.error("Gagal mengirim pesan:", error);
-    }
-  };
-
-  // Empty state jika pengguna belum memiliki percakapan sama sekali
   if (!isLoadingConversations && conversations.length === 0) {
     return (
       <div className="max-w-screen-xl mx-auto px-4 py-12">
-        <div 
+        <div
           className="rounded-2xl border p-12 text-center space-y-4 max-w-lg mx-auto shadow-sm"
           style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
         >
@@ -149,7 +142,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
               className="mt-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-90 transition-opacity cursor-pointer"
               style={{ background: 'var(--color-primary)' }}
             >
-              Mulai di Smart Barter →
+              Mulai di Smart Barter
             </button>
           )}
         </div>
@@ -160,7 +153,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-4 h-[calc(100vh-130px)] flex gap-4">
       {/* LEFT: Conversation list */}
-      <div 
+      <div
         className="w-72 shrink-0 rounded-2xl border overflow-hidden flex flex-col"
         style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
       >
@@ -170,7 +163,6 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
             {conversations.length} obrolan
           </span>
         </div>
-
         <div className="flex-1 overflow-y-auto">
           {isLoadingConversations ? (
             <div className="p-4 text-center text-xs text-gray-400">Memuat obrolan...</div>
@@ -178,8 +170,8 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
             conversations.map(c => {
               const isSelected = activeConvId === c.id;
               const otherUser = c.otherUser || { nama: `Pengguna ${APP_NAME}`, foto_profil: '/assets/seed-images/avatar-placeholder.svg', rating: 4.8, lokasi: 'Semarang' };
-              const lastMsgText = c.lastMessage?.type === 'offer' ? '📋 [Tawaran Barter Resmi]' : (c.lastMessage?.teks || 'Mulai obrolan baru');
-              
+              const lastMsgText = c.lastMessage?.type === 'offer' ? ' [Tawaran Barter Resmi]' : (c.lastMessage?.teks || 'Mulai obrolan baru');
+
               return (
                 <button
                   key={c.id}
@@ -214,7 +206,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                     </p>
                   </div>
                   {c.unreadCount > 0 && (
-                    <div 
+                    <div
                       className="shrink-0 w-5 h-5 rounded-full text-[10px] font-bold text-white flex items-center justify-center shadow-xs"
                       style={{ background: 'var(--color-accent)' }}
                     >
@@ -227,17 +219,15 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
           )}
         </div>
       </div>
-
       {/* RIGHT: Chat window */}
-      <div 
+      <div
         className="flex-1 rounded-2xl border overflow-hidden flex flex-col"
         style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
       >
         {activeConversation ? (
           <>
-            {/* Chat header */}
             <div className="border-b" style={{ borderColor: 'var(--color-border)' }}>
-              <div 
+              <div
                 className="px-4 py-3 flex items-center gap-3"
                 style={{ background: 'var(--color-primary)' }}
               >
@@ -268,15 +258,13 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                   </p>
                 </div>
               </div>
-
-              {/* Sticky product summary */}
               {activeConversation.relatedItem && (
-                <div 
+                <div
                   className="px-4 py-2.5 flex items-center gap-3"
                   style={{ background: '#f8f4ee', borderTop: '1px solid var(--color-border)' }}
                 >
-                  <img 
-                    src={activeConversation.relatedItem.foto} 
+                  <img
+                    src={activeConversation.relatedItem.foto}
                     alt={activeConversation.relatedItem.nama_barang || activeConversation.relatedItem.nama}
                     className="w-10 h-10 rounded-lg object-cover border"
                     style={{ borderColor: 'var(--color-border)' }}
@@ -293,16 +281,15 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                         Rp {(activeConversation.relatedItem.harga || 0).toLocaleString('id-ID')}
                       </span>
                       <span className="text-[10px] text-gray-500 truncate">
-                        · {activeConversation.relatedItem.kondisi}
+                        {activeConversation.relatedItem.kondisi}
                       </span>
                     </div>
                   </div>
                 </div>
               )}
             </div>
-
             {/* Messages */}
-            <div 
+            <div
               className="flex-1 overflow-y-auto p-4 space-y-3"
               style={{ background: '#faf7f2' }}
             >
@@ -314,7 +301,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                   return (
                     <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                       {msg.type === 'offer' ? (
-                        <div 
+                        <div
                           className="max-w-[75%] rounded-2xl p-3.5 shadow-sm border"
                           style={{
                             background: 'var(--color-card)',
@@ -337,18 +324,18 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                             ))}
                             {!isMe && (
                               <div className="flex gap-2 mt-3 pt-1 border-t" style={{ borderColor: 'var(--color-border)' }}>
-                                <button 
+                                <button
                                   type="button"
                                   onClick={() => sendMessage('Saya setuju dengan tawaran barter ini! Mari atur jadwal ketemuan/COD.')}
-                                  className="flex-1 py-1.5 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-90 cursor-pointer shadow-xs" 
+                                  className="flex-1 py-1.5 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-90 cursor-pointer shadow-xs"
                                   style={{ background: 'var(--color-primary)' }}
                                 >
-                                  ✓ Terima Tawaran
+                                  Terima Tawaran
                                 </button>
-                                <button 
+                                <button
                                   type="button"
                                   onClick={() => sendMessage('Bisa kita negosiasikan kembali untuk selisih harganya?')}
-                                  className="flex-1 py-1.5 rounded-lg text-xs font-bold border hover:bg-black/5 transition-colors cursor-pointer" 
+                                  className="flex-1 py-1.5 rounded-lg text-xs font-bold border hover:bg-black/5 transition-colors cursor-pointer"
                                   style={{ borderColor: 'var(--color-border)', color: 'var(--color-muted)' }}
                                 >
                                   Negosiasi
@@ -357,11 +344,11 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                             )}
                           </div>
                           <span className="text-[10px] block text-right mt-1.5" style={{ color: 'var(--color-muted)' }}>
-                            {msg.waktu} {isMe && '✓✓'}
+                            {msg.waktu}
                           </span>
                         </div>
                       ) : msg.type === 'system' ? (
-                        <div 
+                        <div
                           className="max-w-[75%] rounded-2xl p-3 shadow-sm border"
                           style={{ background: '#e8f4ea', borderColor: '#c3e6cb', color: 'var(--color-text)', borderBottomLeftRadius: 4 }}
                         >
@@ -371,7 +358,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                           </span>
                         </div>
                       ) : (
-                        <div 
+                        <div
                           className="max-w-[70%] rounded-2xl px-4 py-2.5 shadow-sm"
                           style={{
                             background: isMe ? 'var(--color-primary)' : 'var(--color-card)',
@@ -382,11 +369,11 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                           }}
                         >
                           <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.teks}</p>
-                          <span 
+                          <span
                             className={`text-[10px] block text-right mt-0.5 ${isMe ? 'text-white/70' : ''}`}
                             style={!isMe ? { color: 'var(--color-muted)' } : {}}
                           >
-                            {msg.waktu} {isMe && '✓✓'}
+                            {msg.waktu}
                           </span>
                         </div>
                       )}
@@ -396,10 +383,9 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
               )}
               <div ref={messagesEndRef} />
             </div>
-
             {/* Input area */}
-            <div 
-              className="border-t p-3 space-y-2.5" 
+            <div
+              className="border-t p-3 space-y-2.5"
               style={{ borderColor: 'var(--color-border)', background: 'var(--color-card)' }}
             >
               <div className="flex items-center gap-2">
@@ -412,7 +398,6 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                   Transaksi Selesai & Beri Ulasan
                 </button>
               </div>
-
               <div className="flex items-end gap-2">
                 <div className="flex-1 relative">
                   <textarea
@@ -450,14 +435,13 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
           </div>
         )}
       </div>
-
       {/* Review Modal */}
       {reviewOpen && activeConversation && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/50 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in"
           onClick={e => e.target === e.currentTarget && setReviewOpen(false)}
         >
-          <div 
+          <div
             className="w-full max-w-md rounded-2xl overflow-hidden shadow-2xl border"
             style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
           >
@@ -507,7 +491,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                 style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
               />
               <div className="flex gap-2">
-                <button 
+                <button
                   type="button"
                   onClick={() => setReviewOpen(false)}
                   className="flex-1 py-2.5 rounded-xl border font-bold text-xs cursor-pointer hover:bg-black/5 transition-colors"
@@ -515,10 +499,10 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                 >
                   Nanti Saja
                 </button>
-                <button 
+                <button
                   type="button"
                   onClick={() => {
-                    sendMessage(`⭐ Transaksi Selesai & Diberi Ulasan (${rating}/5 bintang)${reviewText.trim() ? ': "' + reviewText.trim() + '"' : ''}`, 'system');
+                    sendMessage(`Transaksi Selesai & Diberi Ulasan (${rating}/5 bintang)${reviewText.trim() ? ': "' + reviewText.trim() + '"' : ''}`, 'system');
                     setReviewOpen(false);
                     setReviewText('');
                   }}

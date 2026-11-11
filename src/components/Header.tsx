@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { chatService } from '../services/db'; // Menggunakan layanan database Railway jika diperlukan
 import { APP_NAME, APP_LOGO_LETTER } from '../constants/brand';
 
 interface HeaderProps {
@@ -10,7 +9,6 @@ interface HeaderProps {
   cartCount?: number;
 }
 
-// Rekomendasi kata kunci pencarian populer untuk mahasiswa UNNES
 const popularSearches = [
   'Laptop Lenovo',
   'Buku Kalkulus',
@@ -27,17 +25,13 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
   const [search, setSearch] = useState('');
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  
-  // State untuk notifikasi dari backend (menggantikan getDB().notifications)
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Ambil data notifikasi jika user sudah login
   useEffect(() => {
     if (currentUser) {
-      // Simulasi fetch notifikasi atau bisa dihubungkan ke endpoint chat/notif backend Railway
-      // Untuk sementara menggunakan data kosong atau state lokal aman
-      setNotifications([]); 
+      // Placeholder / simulasi notifikasi user
+      setNotifications([]);
       setUnreadCount(0);
     }
   }, [currentUser]);
@@ -56,21 +50,21 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
     <header className="sticky top-0 z-50 shadow-md" style={{ background: 'var(--color-primary)' }}>
       {/* Top bar */}
       <div className="max-w-screen-xl mx-auto px-4 py-3 flex items-center gap-3">
-        {/* Logo  */}
+        {/* Logo */}
         <button
           onClick={() => onNavigate('home')}
           title={`${APP_NAME} Beranda`}
-          className="w-10 h-10 rounded-xl flex items-center justify-center text-xl font-black shadow-sm shrink-0 hover:opacity-90 transition-transform active:scale-95"
+          className="w-10 h-10 rounded-xl flex items-center justify-center text-xl font-black shadow-sm shrink-0 hover:opacity-90 transition-transform active:scale-95 cursor-pointer"
           style={{ background: 'var(--color-bg)', color: 'var(--color-primary)' }}
         >
           {APP_LOGO_LETTER}
         </button>
 
-        {/* Tombol Beranda  */}
+        {/* Tombol Beranda */}
         <button
           onClick={() => onNavigate('home')}
           title="Beranda"
-          className="text-white hover:opacity-85 transition-all p-2 rounded-xl shrink-0 flex items-center justify-center"
+          className="text-white hover:opacity-85 transition-all p-2 rounded-xl shrink-0 flex items-center justify-center cursor-pointer"
           style={{
             background: activePage === 'home' ? 'rgba(255, 255, 255, 0.18)' : 'rgba(255, 255, 255, 0.08)',
           }}
@@ -115,7 +109,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
         {/* Smart Barter Button */}
         <button
           onClick={() => onNavigate('barter')}
-          className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-white transition-all hover:opacity-90 shrink-0 shadow-sm"
+          className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-white transition-all hover:opacity-90 shrink-0 shadow-sm cursor-pointer"
           style={{
             background: activePage === 'barter' ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.18)',
             border: '1px solid rgba(255, 255, 255, 0.25)',
@@ -133,7 +127,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
               onOpenAddItem();
             }
           }}
-          className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold text-white transition-all hover:opacity-90 shrink-0 shadow-sm"
+          className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold text-white transition-all hover:opacity-90 shrink-0 shadow-sm cursor-pointer"
           style={{
             background: 'var(--color-accent)',
             fontFamily: 'var(--font-body)',
@@ -175,7 +169,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
           <div className="relative">
             <button
               onClick={() => setNotifOpen(!notifOpen)}
-              className="text-white flex flex-col items-center gap-0.5 hover:opacity-80 transition-opacity"
+              className="text-white flex flex-col items-center gap-0.5 hover:opacity-80 transition-opacity cursor-pointer"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -223,7 +217,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
           {!currentUser ? (
             <button
               onClick={() => openAuthModal('login')}
-              className="px-4 py-2 rounded-xl text-xs font-bold text-white shadow-sm transition-all hover:opacity-90 active:scale-95 shrink-0"
+              className="px-4 py-2 rounded-xl text-xs font-bold text-white shadow-sm transition-all hover:opacity-90 active:scale-95 shrink-0 cursor-pointer"
               style={{ background: 'var(--color-accent)', fontFamily: 'var(--font-body)' }}
             >
               Masuk
@@ -232,7 +226,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
             <div className="relative">
               <button
                 onClick={() => setProfileOpen(!profileOpen)}
-                className="flex items-center gap-2 hover:opacity-90 transition-opacity focus:outline-none"
+                className="flex items-center gap-2 hover:opacity-90 transition-opacity focus:outline-none cursor-pointer"
               >
                 <div className="w-7 h-7 rounded-full overflow-hidden border-2 border-white/60 bg-white/20 shrink-0">
                   <img
@@ -248,7 +242,6 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
-
               {profileOpen && (
                 <div
                   className="absolute right-0 top-11 w-56 rounded-xl shadow-xl border z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100"
@@ -268,7 +261,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                           setProfileOpen(false);
                           if (onNavigate) onNavigate('profile');
                         }}
-                        className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
+                        className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors cursor-pointer"
                       >
                         <span>Profil Saya</span>
                       </button>
@@ -277,7 +270,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                           setProfileOpen(false);
                           if (onNavigate) onNavigate('orders');
                         }}
-                        className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
+                        className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors cursor-pointer"
                       >
                         <span>Pesanan Saya</span>
                       </button>
@@ -286,7 +279,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                           setProfileOpen(false);
                           if (onNavigate) onNavigate('my-items');
                         }}
-                        className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
+                        className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors cursor-pointer"
                       >
                         <span>Barang Saya</span>
                       </button>
@@ -295,7 +288,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                           setProfileOpen(false);
                           if (onNavigate) onNavigate('barter');
                         }}
-                        className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
+                        className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors cursor-pointer"
                       >
                         <span>Barter Saya</span>
                       </button>
@@ -307,7 +300,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                           logout();
                           if (onNavigate) onNavigate('home');
                         }}
-                        className="w-full px-4 py-2 text-left text-red-600 hover:bg-red-50 flex items-center gap-2 font-semibold transition-colors"
+                        className="w-full px-4 py-2 text-left text-red-600 hover:bg-red-50 flex items-center gap-2 font-semibold transition-colors cursor-pointer"
                       >
                         <span>Keluar / Logout</span>
                       </button>
@@ -347,12 +340,11 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
               </button>
             ))}
           </div>
-
           {/* Tombol Chat & Negosiasi */}
           <div className="shrink-0">
             <button
               onClick={() => onNavigate('chat')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-90 shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-90 shadow-sm cursor-pointer"
               style={{
                 background: activePage === 'chat' ? '#c8682a' : 'var(--color-accent)',
                 color: 'white',

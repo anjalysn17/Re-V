@@ -12,7 +12,6 @@ import CategoryPage from './pages/CategoryPage';
 import SearchResultsPage from './pages/SearchResultsPage';
 import CartPage from './pages/CartPage';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { getDB } from './services/db';
 import AuthModal from './components/AuthModal';
 import AddItemModal from './components/AddItemModal';
 import ResetDemoButton from './components/ResetDemoButton';
@@ -22,6 +21,9 @@ export interface NavigationParams {
   productId?: string;
   conversationId?: string;
   searchQuery?: string;
+  targetUserId?: string;
+  targetItemId?: string;
+  initialMessage?: string;
 }
 
 export type NavigateFunction = (
@@ -30,7 +32,18 @@ export type NavigateFunction = (
   extraParam?: string
 ) => void;
 
-type Page = 'home' | 'product' | 'barter' | 'chat' | 'admin' | 'my-items' | 'category' | 'search' | 'cart';
+type Page =
+  | 'home'
+  | 'product'
+  | 'barter'
+  | 'chat'
+  | 'admin'
+  | 'my-items'
+  | 'category'
+  | 'search'
+  | 'cart'
+  | 'profile'
+  | 'orders';
 
 function MainLayout() {
   const { currentUser } = useAuth();
@@ -68,13 +81,12 @@ function MainLayout() {
     (window as any).revNavigate = navigate;
   }, []);
 
-  const cartCount = currentUser
-    ? (getDB().cart || []).filter(c => c.id_user === currentUser.id).length
-    : 0;
+  // Hitung jumlah item keranjang jika diperlukan, atau set 0/ambil dari backend
+  const cartCount = 0;
 
   return (
     <div className="min-h-screen relative" style={{ background: 'var(--color-bg)', fontFamily: 'var(--font-body)' }}>
-      {/* Header Utama dengan tombol Tambah Barang dan navigasi */}
+      {/* Header Utama */}
       <Header
         activePage={page}
         onNavigate={navigate}
@@ -115,7 +127,7 @@ function MainLayout() {
             onCartUpdated={handleCartUpdated}
           />
         )}
-        {page === 'profile' && <ProfilePage />}
+        {page === 'profile' && <ProfilePage onNavigate={navigate} />}
         {page === 'orders' && <OrdersPage />}
         {page === 'barter' && (
           <SmartBarter
@@ -141,17 +153,13 @@ function MainLayout() {
         )}
       </main>
 
-      {/* Modal Login & Register */}
+      {/* Modal & Overlay */}
       <AuthModal onLoginSuccess={role => navigate(role === 'admin' ? 'admin' : 'home')} />
-
-      {/* Modal Tambah Barang Baru */}
       <AddItemModal
         isOpen={isAddItemOpen}
         onClose={() => setIsAddItemOpen(false)}
         onItemAdded={() => setRefreshKey(prev => prev + 1)}
       />
-
-      {/* Tombol Reset Data Demo */}
       <ResetDemoButton />
     </div>
   );

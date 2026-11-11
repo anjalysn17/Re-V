@@ -1,5 +1,5 @@
-import { getDB, saveDB, generateId } from '../services/db';
-import { Item, User, Offer, Conversation, Message, Notification } from '../types/database';
+import { Item, User } from '../types/database';
+import { barterService, chatService } from '../services/db';
 
 interface CreateOfferParams {
   myItem: Item;
@@ -8,96 +8,74 @@ interface CreateOfferParams {
 }
 
 interface CreateOfferResult {
-  convId: string;
-  offerId: string;
+  success: boolean;
+  convId?: string;
+  offerId?: string;
+  message?: string;
 }
 
 /**
- * Membuat tawaran barter resmi, membuat percakapan jika belum ada,
- * menambahkan pesan tawaran resmi ke percakapan, serta mengirimkan notifikasi.
+ * Membuat tawaran barter resmi, memastikan percakapan aktif ada,
+ * mengirimkan pesan penawaran resmi ke backend, serta memicu notifikasi.
  */
-export function createOfferAndConversation({
+export async function createOfferAndConversation({
   myItem,
   targetItem,
   currentUser,
-}: CreateOfferParams): CreateOfferResult {
-  const currentDB = getDB();
-  if (!Array.isArray(currentDB.offers)) currentDB.offers = [];
-  if (!Array.isArray(currentDB.conversations)) currentDB.conversations = [];
-  if (!Array.isArray(currentDB.messages)) currentDB.messages = [];
-  if (!Array.isArray(currentDB.notifications)) currentDB.notifications = [];
+}: CreateOfferParams): Promise<CreateOfferResult> {
+  try {
+    const priceDiff = Math.abs((myItem.harga || 0) - (targetItem.harga || 0));
 
-  // 1. Buat record Offer baru
-  const newOfferId = generateId('OFR', currentDB.offers);
-  const priceDiff = Math.abs(myItem.harga - targetItem.harga);
-
-  const newOffer: Offer = {
-    id: newOfferId,
-    item_ditawarkan: myItem.id,
-    item_diminta: targetItem.id,
-    status: 'pending',
-    id_pengirim: currentUser.id,
-    id_penerima: targetItem.id_pemilik,
-    selisih_harga: priceDiff,
-  };
-  currentDB.offers.unshift(newOffer);
-
-  // 2. Cari atau buat Conversation untuk pasangan user ini (tanpa syarat id_item_terkait)
-  let conv = currentDB.conversations.find(
-    c =>
-      (c.id_user_a === currentUser.id && c.id_user_b === targetItem.id_pemilik) ||
-      (c.id_user_a === targetItem.id_pemilik && c.id_user_b === currentUser.id)
-  );
-
-  if (!conv) {
-    const newConvId = generateId('CONV', currentDB.conversations);
-    conv = {
-      id: newConvId,
-      id_user_a: currentUser.id,
-      id_user_b: targetItem.id_pemilik,
-      id_item_terkait: targetItem.id,
+    // 1. Kirim penawaran barter ke backend API (/api/barter)
+    const offerPayload = {
+      item_ditawarkan: myItem.id,
+      item_diminta: targetItem.id,
+      id_pengirim: currentUser.id,
+      id_penerima: targetItem.id_pemilik,
+      selisih_harga: priceDiff,
     };
-    currentDB.conversations.unshift(conv);
-  } else {
-    // Update konteks barang terbaru yang sedang dibahas
-    conv.id_item_terkait = targetItem.id;
+
+    const offerResult = await barterService.createOffer(offerPayload);
+    if (!offerResult.success) {
+      return { success: false, message: offerResult.message || 'Gagal membuat penawaran barter.' };
+    }
+
+    // 2. Ambil daftar percakapan user untuk mencari atau membuat kamar obrolan terkait
+    const conversations = await chatService.getConversations(currentUser.id);
+    let conv = conversations.find(
+      (c: any) =>
+        (c.id_user_a === currentUser.id && c.id_user_b === targetItem.id_pemilik) ||
+        (c.id_user_a === targetItem.id_pemilik && c.id_user_b === currentUser.id)
+    );
+
+    let convId = conv ? conv.id : null;
+
+    // Jika belum ada percakapan, backend chat secara otomatis akan menangani atau bisa dikirim pesan pertama
+    const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    const itemNameMy = myItem.nama_barang || myItem.name || 'Barang';
+    const itemNameTarget = targetItem.nama_barang || targetItem.name || 'Barang';
+    
+    const offerMsgText = `Tawaran Barter Resmi\n\nSaya tawarkan: ${itemNameMy} (Rp ${(myItem.harga || 0).toLocaleString('id-ID')})\nUntuk: ${itemNameTarget} (Rp ${(targetItem.harga || 0).toLocaleString('id-ID')})\nEstimasi selisih: Rp ${priceDiff.toLocaleString('id-ID')}`;
+
+    if (convId) {
+      await chatService.sendMessage({
+        id_conversation: convId,
+        id_pengirim: currentUser.id,
+        teks: offerMsgText,
+        waktu: timeStr,
+        type: 'offer',
+      });
+    }
+
+    return {
+      success: true,
+      convId: convId || 'CONV-NEW',
+      offerId: offerResult.offerId || 'OFR-NEW',
+    };
+  } catch (error: any) {
+    console.error('Error in createOfferAndConversation:', error);
+    return { success: false, message: error.message || 'Terjadi kesalahan sistem saat memproses barter.' };
   }
-
-  // 3. Tambahkan 1 Message baru dengan type 'offer'
-  const newMsgId = generateId('MSG', currentDB.messages);
-  const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-  const offerMsgText = `Tawaran Barter Resmi\n\nSaya tawarkan: ${myItem.nama} (Rp ${myItem.harga.toLocaleString('id-ID')})\nUntuk: ${targetItem.nama} (Rp ${targetItem.harga.toLocaleString('id-ID')})\nEstimasi selisih: Rp ${priceDiff.toLocaleString('id-ID')}`;
-
-  const newMsg: Message = {
-    id: newMsgId,
-    id_conversation: conv.id,
-    id_pengirim: currentUser.id,
-    teks: offerMsgText,
-    waktu: timeStr,
-    status_baca: false,
-    type: 'offer',
-  };
-  currentDB.messages.push(newMsg);
-
-  // 4. Tambahkan Notifikasi baru untuk penerima
-  const newNtfId = generateId('NTF', currentDB.notifications);
-  const newNotif: Notification = {
-    id: newNtfId,
-    id_user: targetItem.id_pemilik,
-    tipe: 'barter',
-    teks: `Tawaran barter baru dari ${currentUser.nama} untuk ${targetItem.nama}`,
-    waktu: 'Baru saja',
-    sudah_dibaca: false,
-  };
-  currentDB.notifications.unshift(newNotif);
-
-  // 5. Simpan ke database localStorage
-  saveDB(currentDB);
-
-  return {
-    convId: conv.id,
-    offerId: newOffer.id,
-  };
 }
 
 interface OpenConversationParams {
@@ -107,76 +85,40 @@ interface OpenConversationParams {
 }
 
 /**
- * Mencari atau membuat percakapan dengan pemilik barang terkait item ini.
- * Jika `initialMessage` diberikan, mengirim 1 pesan teks pembuka dan notifikasi.
+ * Membuka atau mendapatkan kamar obrolan dengan pemilik barang terkait.
+ * Jika `initialMessage` diberikan, mengirimkan 1 pesan teks pembuka.
  */
-export function getOrCreateConversation({
+export async function getOrCreateConversation({
   targetItem,
   currentUser,
   initialMessage,
-}: OpenConversationParams): { convId: string } {
-  const currentDB = getDB();
-  if (!Array.isArray(currentDB.conversations)) currentDB.conversations = [];
-  if (!Array.isArray(currentDB.messages)) currentDB.messages = [];
-  if (!Array.isArray(currentDB.notifications)) currentDB.notifications = [];
+}: OpenConversationParams): Promise<{ success: boolean; convId?: string; message?: string }> {
+  try {
+    // Ambil daftar percakapan user dari backend
+    const conversations = await chatService.getConversations(currentUser.id);
+    let conv = conversations.find(
+      (c: any) =>
+        (c.id_user_a === currentUser.id && c.id_user_b === targetItem.id_pemilik) ||
+        (c.id_user_a === targetItem.id_pemilik && c.id_user_b === currentUser.id)
+    );
 
-  let conv = currentDB.conversations.find(
-    c =>
-      (c.id_user_a === currentUser.id && c.id_user_b === targetItem.id_pemilik) ||
-      (c.id_user_a === targetItem.id_pemilik && c.id_user_b === currentUser.id)
-  );
+    let convId = conv ? conv.id : null;
 
-  let updated = false;
-
-  if (!conv) {
-    const newConvId = generateId('CONV', currentDB.conversations);
-    conv = {
-      id: newConvId,
-      id_user_a: currentUser.id,
-      id_user_b: targetItem.id_pemilik,
-      id_item_terkait: targetItem.id,
-    };
-    currentDB.conversations.unshift(conv);
-    updated = true;
-  } else {
-    if (conv.id_item_terkait !== targetItem.id) {
-      conv.id_item_terkait = targetItem.id;
-      updated = true;
+    // Jika pesan pembuka/ajakan COD diberikan, kirimkan sebagai pesan baru
+    if (initialMessage && initialMessage.trim() && convId) {
+      const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+      await chatService.sendMessage({
+        id_conversation: convId,
+        id_pengirim: currentUser.id,
+        teks: initialMessage.trim(),
+        waktu: timeStr,
+        type: 'text',
+      });
     }
+
+    return { success: true, convId: convId || 'CONV-NEW' };
+  } catch (error: any) {
+    console.error('Error in getOrCreateConversation:', error);
+    return { success: false, message: error.message || 'Gagal membuka obrolan.' };
   }
-
-  // Jika ada pesan pembuka (misal ajakan COD via chat)
-  if (initialMessage && initialMessage.trim()) {
-    const newMsgId = generateId('MSG', currentDB.messages);
-    const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-
-    const newMsg: Message = {
-      id: newMsgId,
-      id_conversation: conv.id,
-      id_pengirim: currentUser.id,
-      teks: initialMessage.trim(),
-      waktu: timeStr,
-      status_baca: false,
-      type: 'text',
-    };
-    currentDB.messages.push(newMsg);
-
-    const newNtfId = generateId('NTF', currentDB.notifications);
-    const newNotif: Notification = {
-      id: newNtfId,
-      id_user: targetItem.id_pemilik,
-      tipe: 'chat',
-      teks: `Pesan baru dari ${currentUser.nama} tentang ${targetItem.nama}`,
-      waktu: 'Baru saja',
-      sudah_dibaca: false,
-    };
-    currentDB.notifications.unshift(newNotif);
-    updated = true;
-  }
-
-  if (updated) {
-    saveDB(currentDB);
-  }
-
-  return { convId: conv.id };
 }

@@ -31,17 +31,12 @@ const PHOTO_PRESETS = [
   { label: 'Perlengkapan', url: '/perlengkapan.jpg' },
 ];
 
-/**
- * Kompres dan resize gambar ke lebar maksimal (default 800px) menggunakan Canvas,
- * lalu kembalikan string base64 data URL untuk disimpan secara hemat.
- */
 function compressImage(file: File, maxWidth = 800, quality = 0.8): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!file.type.startsWith('image/')) {
       reject(new Error('File yang dipilih bukan gambar. Harap pilih file gambar (JPG, PNG, WebP).'));
       return;
     }
-
     const reader = new FileReader();
     reader.onload = e => {
       const result = e.target?.result;
@@ -49,32 +44,25 @@ function compressImage(file: File, maxWidth = 800, quality = 0.8): Promise<strin
         reject(new Error('Gagal membaca data file gambar.'));
         return;
       }
-
       const img = new Image();
       img.onload = () => {
         let width = img.width;
         let height = img.height;
-
         if (width > maxWidth) {
           height = Math.round((height * maxWidth) / width);
           width = maxWidth;
         }
-
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
-
         const ctx = canvas.getContext('2d');
         if (!ctx) {
           resolve(result);
           return;
         }
-
-        // Isi background putih agar file transparan (PNG) tidak menghasilkan background hitam saat konversi ke JPEG
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
-
         try {
           const dataUrl = canvas.toDataURL('image/jpeg', quality);
           resolve(dataUrl);
@@ -92,7 +80,6 @@ function compressImage(file: File, maxWidth = 800, quality = 0.8): Promise<strin
 
 export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemModalProps) {
   const { currentUser } = useAuth();
-
   const [nama, setNama] = useState('');
   const [kategori, setKategori] = useState(CATEGORIES[0]);
   const [harga, setHarga] = useState<number | string>('');
@@ -121,20 +108,17 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
     setErrorMsg('');
     const file = e.target.files?.[0];
     if (!file) return;
-
     if (!file.type.startsWith('image/')) {
-      setErrorMsg('File yang dipilih bukan gambar. Harap pilih file bertipe JPG, PNG, atau WebP.');
+      setErrorMsg('File yang dipilih bukan gambar.');
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
-
     const MAX_SIZE = 2 * 1024 * 1024; // 2MB
     if (file.size > MAX_SIZE) {
-      setErrorMsg('Ukuran file foto melebihi 2 MB. Harap pilih gambar yang lebih kecil.');
+      setErrorMsg('Ukuran file foto melebihi 2 MB.');
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
-
     setIsCompressing(true);
     try {
       const compressedBase64 = await compressImage(file, 800, 0.8);
@@ -152,22 +136,18 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
-
     if (!currentUser) {
       setErrorMsg('Anda harus login terlebih dahulu.');
       return;
     }
-
     if (!nama.trim()) {
       setErrorMsg('Nama barang wajib diisi.');
       return;
     }
-
     if (!harga || Number(harga) <= 0) {
       setErrorMsg('Harga harus berupa angka yang valid.');
       return;
     }
-
     setIsSubmitting(true);
     try {
       const itemPayload = {
@@ -181,15 +161,12 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
         lokasi: lokasi.trim() || currentUser.lokasi || 'Sekaran, Gunungpati',
         deskripsi: deskripsi.trim() || 'Tidak ada deskripsi.',
       };
-
       await itemService.createItem(itemPayload);
-
       setShowToast(true);
       setTimeout(() => {
         setShowToast(false);
         onItemAdded?.();
         onClose();
-        // Reset form
         setNama('');
         setHarga('');
         setKategori(CATEGORIES[0]);
@@ -244,17 +221,15 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
           </button>
         </div>
 
-        {/* Toast Notifikasi Sukses */}
         {showToast && (
           <div
             className="m-4 p-3 rounded-xl text-xs font-bold text-white text-center shadow animate-in fade-in"
             style={{ background: 'var(--color-success, #4a8c5c)' }}
           >
-            ✓ Barang baru berhasil ditambahkan ke listing!
+            Barang baru berhasil ditambahkan ke listing!
           </div>
         )}
 
-        {/* Form Container */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
           {errorMsg && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
@@ -262,7 +237,6 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
             </div>
           )}
 
-          {/* Nama Barang */}
           <div>
             <label className="block text-xs font-bold text-gray-700 mb-1">
               Nama Barang <span className="text-red-500">*</span>
@@ -278,7 +252,6 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
             />
           </div>
 
-          {/* Kategori & Kondisi */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold text-gray-700 mb-1">Kategori</label>
@@ -295,7 +268,6 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
                 ))}
               </select>
             </div>
-
             <div>
               <label className="block text-xs font-bold text-gray-700 mb-1">Kondisi / Grade</label>
               <select
@@ -313,7 +285,6 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
             </div>
           </div>
 
-          {/* Harga (Rupiah) & Lokasi */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold text-gray-700 mb-1">
@@ -332,7 +303,6 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
                 />
               </div>
             </div>
-
             <div>
               <label className="block text-xs font-bold text-gray-700 mb-1">Lokasi Kampus / Kos</label>
               <input
@@ -346,7 +316,6 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
             </div>
           </div>
 
-          {/* Status Jual / Barter */}
           <div>
             <label className="block text-xs font-bold text-gray-700 mb-1.5">Tipe Penawaran</label>
             <div className="grid grid-cols-3 gap-2">
@@ -371,14 +340,11 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
             </div>
           </div>
 
-          {/* Foto Barang */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-xs font-bold text-gray-700">Foto Barang</label>
               <span className="text-[11px] text-gray-400">Pilih salah satu opsi</span>
             </div>
-
-            {/* Tab Pemilih Opsi Foto */}
             <div className="grid grid-cols-3 gap-2 mb-2.5">
               {[
                 { id: 'upload', label: 'Upload File' },
@@ -400,7 +366,6 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
               ))}
             </div>
 
-            {/* Opsi 1: Upload dari Device */}
             {photoSource === 'upload' && (
               <div>
                 <label
@@ -442,7 +407,6 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
               </div>
             )}
 
-            {/* Opsi 2: Pilih Preset */}
             {photoSource === 'preset' && (
               <div>
                 <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -467,7 +431,6 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
               </div>
             )}
 
-            {/* Opsi 3: Masukkan URL */}
             {photoSource === 'url' && (
               <div>
                 <input
@@ -484,7 +447,6 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
               </div>
             )}
 
-            {/* Preview Thumbnail */}
             {foto && (
               <div
                 className="mt-2.5 flex items-center gap-3 p-2.5 rounded-xl border"
@@ -514,11 +476,6 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
                       </span>
                     )}
                   </div>
-                  <p className="text-[10px] text-gray-500 truncate mt-0.5 font-mono">
-                    {foto.startsWith('data:')
-                      ? 'Tersimpan dari file perangkat (Data URL terkompresi)'
-                      : foto}
-                  </p>
                 </div>
                 {foto !== '/assets/seed-images/placeholder.svg' && (
                   <button
@@ -537,7 +494,6 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
             )}
           </div>
 
-          {/* Deskripsi */}
           <div>
             <label className="block text-xs font-bold text-gray-700 mb-1">Deskripsi Barang</label>
             <textarea
@@ -550,7 +506,6 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
             />
           </div>
 
-          {/* Tombol Simpan */}
           <div className="pt-2 flex items-center gap-3">
             <button
               type="button"

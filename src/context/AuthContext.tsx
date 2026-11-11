@@ -1,11 +1,9 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState } from 'react';
 import { User } from '../types/database';
-// Import authService yang baru kita buat di db.ts
 import { authService } from '../services/db';
 
 export const CURRENT_USER_KEY = 'currentUser';
 
-// PERHATIAN: login dan register sekarang mengembalikan Promise (async)
 interface AuthContextType {
   currentUser: User | null;
   login: (identifier: string, password: string) => Promise<{ success: boolean; user?: User; message?: string }>;
@@ -26,7 +24,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  // Ambil user dari localStorage hanya untuk menyimpan sesi sementara
+  // Ambil sesi user dari localStorage saat pertama kali dimuat
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     try {
       const stored = localStorage.getItem(CURRENT_USER_KEY);
@@ -39,27 +37,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
 
-  // getDB() dihapus karena database Railway tidak perlu diinisialisasi dari frontend
-
-  // Fungsi Login sekarang memanggil server MySQL Railway via fetch
+  // Fungsi Login async terhubung ke backend Railway API (/api/auth/login)
   const login = async (identifier: string, password: string) => {
     try {
-      // Identifier bisa berupa email
       const cleanId = identifier.trim().toLowerCase();
-      
-      // Panggil backend API
       const response = await authService.login(cleanId, password);
-
+      
       if (!response.success) {
         return { success: false, message: response.message || 'Login gagal.' };
       }
 
-      // Jika berhasil, simpan user ke state dan localStorage
-      const user = response.data; // asumsikan backend mengembalikan data user di properti 'data'
+      // Mengambil properti .user sesuai struktur balasan dari authRoutes.js
+      const user = response.user;
+      if (!user) {
+        return { success: false, message: 'Data pengguna tidak valid dari server.' };
+      }
+
       setCurrentUser(user);
       localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
       setIsAuthModalOpen(false);
-      
+
       return { success: true, user };
     } catch (error) {
       console.error('Error saat login:', error);
@@ -67,11 +64,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Quick Login biasanya dipakai untuk mode demo. 
-  // Jika ingin dihapus boleh, namun ini disisakan agar tidak memecah komponen yang masih memakainya.
   const quickLogin = (userId: string) => {
-    console.warn('quickLogin hanya disimulasikan. Sebaiknya gunakan login normal dengan password.');
-    // Simulasi jika dibutuhkan
+    console.warn('quickLogin dipanggil untuk ID:', userId);
   };
 
   const logout = () => {
@@ -79,7 +73,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem(CURRENT_USER_KEY);
   };
 
-  // Fungsi Register sekarang mengirim data ke server MySQL Railway via fetch
+  // Fungsi Register async terhubung ke backend Railway API (/api/auth/register)
   const register = async (data: { nama: string; email: string; password: string; lokasi?: string }) => {
     try {
       const payload = {
@@ -89,19 +83,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         lokasi: data.lokasi?.trim() || 'Sekaran, Gunungpati'
       };
 
-      // Panggil backend API
       const response = await authService.register(payload);
-
       if (!response.success) {
         return { success: false, message: response.message || 'Gagal mendaftar.' };
       }
 
-      // Jika berhasil mendaftar, langsung set state user (auto-login)
-      const newUser = response.data;
+      // Mengambil properti .user sesuai struktur balasan dari authRoutes.js
+      const newUser = response.user;
+      if (!newUser) {
+        return { success: false, message: 'Gagal mendapatkan data registrasi pengguna.' };
+      }
+
       setCurrentUser(newUser);
       localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(newUser));
       setIsAuthModalOpen(false);
-      
+
       return { success: true, user: newUser };
     } catch (error) {
       console.error('Error saat register:', error);
@@ -119,8 +115,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const resetDemoData = () => {
-    console.warn('resetDemoData tidak lagi berfungsi karena data ada di database Railway.');
-    // resetDB() dihapus
     setCurrentUser(null);
     localStorage.removeItem(CURRENT_USER_KEY);
   };
