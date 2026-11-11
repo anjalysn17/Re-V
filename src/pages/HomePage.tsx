@@ -42,8 +42,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
     // Jika tidak ada lokasi spesifik di item, bisa fallback ke lokasi default
     location: item.lokasi ? item.lokasi.split(',')[0] : 'Kampus UNNES',
     img: item.foto,
-    grade: item.kondisi.includes('A') ? 'A' : item.kondisi.includes('B') ? 'B' : item.kondisi.includes('C') ? 'C' : 'A',
-    barter: item.status === 'barter' || item.status === 'keduanya',
+    grade: item.kondisi.match(/Grade ([A-C])/) ? item.kondisi.match(/Grade ([A-C])/)[1] : 'A', barter: item.status === 'barter' || item.status === 'keduanya',
     sold: (idx % 8) + 2,
     kategori: item.kategori || 'Lainnya',
   }));
@@ -53,7 +52,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-5 space-y-8">
       {/* Hero Banner Polos Minimalis */}
-      <div 
+      <div
         className="rounded-2xl relative px-8 py-10 md:px-12 md:py-12 flex flex-col justify-center items-start shadow-sm"
         style={{ background: 'linear-gradient(135deg, #3e5540 0%, var(--color-primary) 50%, #7a9b7b 100%)' }}
       >
@@ -252,14 +251,14 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                   </p>
                   <div className="flex items-center justify-between mt-2">
                     <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#f0ebe2] text-[11px] text-gray-600">
-                      <svg 
-                        className="w-3 h-3 shrink-0 fill-current text-gray-500" 
+                      <svg
+                        className="w-3 h-3 shrink-0 fill-current text-gray-500"
                         viewBox="0 0 20 20"
                       >
-                        <path 
-                          fillRule="evenodd" 
-                          d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" 
-                          clipRule="evenodd" 
+                        <path
+                          fillRule="evenodd"
+                          d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
+                          clipRule="evenodd"
                         />
                       </svg>
                       <span>{product.location}</span>

@@ -68,7 +68,7 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
       }
     };
     fetchMyBarterItems();
-  }, [currentUser, selectedMyItemId]);
+  }, [currentUser]);
 
   const selectedMyItem = myBarterItems.find(it => it.id === selectedMyItemId) || null;
 

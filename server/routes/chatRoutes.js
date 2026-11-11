@@ -122,8 +122,11 @@ router.post('/messages', async (req, res) => {
     }
 
     const msgId = id || `MSG-${Date.now().toString().slice(-5)}`;
-    const timeStr = waktu || new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-
+    const timeStr = waktu || new Date().toLocaleTimeString('id-ID', {
+      timeZone: 'Asia/Jakarta',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
     await db.query(
       `INSERT INTO messages (id, id_conversation, id_pengirim, teks, waktu, status_baca, type)
        VALUES (?, ?, ?, ?, ?, 0, ?)`,
@@ -132,12 +135,12 @@ router.post('/messages', async (req, res) => {
 
     // Ambil data pesan yang baru dimasukkan untuk dikembalikan ke frontend
     const [newMsgRows] = await db.query('SELECT * FROM messages WHERE id = ?', [msgId]);
-    
-    res.status(201).json({ 
-      success: true, 
-      message: 'Pesan berhasil dikirim!', 
+
+    res.status(201).json({
+      success: true,
+      message: 'Pesan berhasil dikirim!',
       data: newMsgRows[0],
-      conversationId: targetConvId 
+      conversationId: targetConvId
     });
   } catch (error) {
     console.error('Error sending message:', error);

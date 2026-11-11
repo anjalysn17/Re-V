@@ -3,6 +3,7 @@ import ReturnModal from '../components/ReturnModal';
 import { useAuth } from '../context/AuthContext';
 import { itemService, barterService, chatService } from '../services/db';
 import { APP_NAME } from '../constants/brand';
+import { getOrCreateConversation } from '../utils/barterActions';
 
 interface ProductDetailProps {
   productId?: string;
@@ -35,7 +36,7 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
     const fetchDetailData = async () => {
       if (!productId) return;
       setIsLoading(true);
-      
+
       try {
         // 1. Ambil detail produk
         const itemData = await itemService.getItemById(productId);
@@ -55,8 +56,8 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
         if (currentUser) {
           const allMyItems = await itemService.getAllItems();
           // Filter barang milik current user yang berstatus barter/keduanya
-          const myBarterReady = allMyItems.filter((i: any) => 
-            i.id_pemilik === currentUser.id && 
+          const myBarterReady = allMyItems.filter((i: any) =>
+            i.id_pemilik === currentUser.id &&
             (i.status === 'barter' || i.status === 'keduanya')
           );
           setMyBarterItems(myBarterReady);
@@ -148,12 +149,11 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
       };
 
       const result = await barterService.createOffer(offerData);
-      
+
       if (result.success) {
         showToast('✓ Tawaran barter berhasil dikirim!');
         setBarterOpen(false);
-        // Bisa diredirect ke halaman barter atau halaman chat penawaran
-        onNavigate('barter'); 
+        onNavigate('barter');
       } else {
         showToast(result.message || 'Gagal mengirim tawaran barter.');
       }
@@ -167,39 +167,40 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
 
   // Handler klik tombol "Chat" via API
   const handleChat = async () => {
-    if (!currentUser) {
-      openAuthModal('login');
-      return;
-    }
-    if (isOwnItem) {
-      showToast('Kamu tidak bisa memulai obrolan dengan diri sendiri.');
-      return;
-    }
+    if (!currentUser) { openAuthModal('login'); return; }
+    if (isOwnItem) { showToast('Kamu tidak bisa memulai obrolan dengan diri sendiri.'); return; }
 
-    // Karena tidak ada pembuatan chat conversation spesifik di frontend,
-    // kita akan arahkan ke halaman chat, lalu komponen Chat yang akan handle konversasi
-    onNavigate('chat', { targetUserId: item.id_pemilik, targetItemId: item.id });
+    setIsSubmitting(true);
+    const result = await getOrCreateConversation({ targetItem: item, currentUser });
+    setIsSubmitting(false);
+
+    if (result.success && result.convId) {
+      onNavigate('chat', { conversationId: result.convId });
+    } else {
+      showToast(result.message || 'Gagal membuka obrolan');
+    }
   };
 
   // Handler klik tombol "Ajak COD via Chat"
-  const handleAjakCOD = () => {
-    if (!currentUser) {
-      openAuthModal('login');
-      return;
-    }
-    if (isOwnItem) {
-      showToast('Kamu tidak bisa mengajak COD pada barang milikmu sendiri.');
-      return;
-    }
+  const handleAjakCOD = async () => {
+    if (!currentUser) { openAuthModal('login'); return; }
+    if (isOwnItem) { showToast('Kamu tidak bisa mengajak COD pada barang milikmu sendiri.'); return; }
 
     const codMessage = `Halo kak ${sellerName}, saya tertarik dengan barang "${item.nama_barang}". Apakah bisa ketemuan langsung untuk cek barang & COD di area ${item.lokasi}?`;
 
-    // Kirim initialMessage lewat params ke halaman chat
-    onNavigate('chat', { 
-      targetUserId: item.id_pemilik, 
-      targetItemId: item.id,
-      initialMessage: codMessage 
+    setIsSubmitting(true);
+    const result = await getOrCreateConversation({
+      targetItem: item,
+      currentUser,
+      initialMessage: codMessage
     });
+    setIsSubmitting(false);
+
+    if (result.success && result.convId) {
+      onNavigate('chat', { conversationId: result.convId });
+    } else {
+      showToast('Gagal memulai obrolan COD');
+    }
   };
 
   // Handler klik tombol "Simpan ke Keranjang"
@@ -208,9 +209,7 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
       openAuthModal('login');
       return;
     }
-    
-    // TODO: Buat endpoint backend cartService.addToCart(userId, itemId)
-    showToast('✓ Keranjang akan terhubung ke backend pada update berikutnya!');
+    showToast('🛒 Keranjang akan terhubung ke backend pada update berikutnya!');
   };
 
   return (
@@ -266,8 +265,8 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
                   {item.status === 'keduanya'
                     ? 'Jual & Barter'
                     : item.status === 'barter'
-                    ? 'Barter'
-                    : 'Jual Beli'}
+                      ? 'Barter'
+                      : 'Jual Beli'}
                 </span>
               </div>
             </div>
@@ -295,8 +294,8 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
                 {item.status === 'keduanya'
                   ? 'Tersedia Barter & Beli'
                   : item.status === 'barter'
-                  ? 'Tersedia Barter'
-                  : 'Tersedia Beli'}
+                    ? 'Tersedia Barter'
+                    : 'Tersedia Beli'}
               </span>
             </div>
 
@@ -578,16 +577,16 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
                     {myBarterItems.map(myItem => {
                       const isSelected = selectedMyItemId === myItem.id;
                       const priceDiff = Math.abs(myItem.harga - item.harga);
+                      
                       return (
                         <button
                           key={myItem.id}
                           type="button"
                           onClick={() => setSelectedMyItemId(isSelected ? null : myItem.id)}
-                          className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                            isSelected
+                          className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${isSelected
                               ? 'border-gray-900 bg-gray-50'
                               : 'border-gray-200 bg-white hover:border-gray-300'
-                          }`}
+                            }`}
                         >
                           <img
                             src={myItem.foto}
@@ -610,9 +609,8 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
                             </div>
                           </div>
                           <div
-                            className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
-                              isSelected ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
-                            }`}
+                            className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${isSelected ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
+                              }`}
                           >
                             {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white"></div>}
                           </div>

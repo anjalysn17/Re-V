@@ -93,7 +93,7 @@ router.patch('/:id/status', async (req, res) => {
 });
 
 // DELETE /api/items/:id - Hapus barang milik pengguna
-router.delete('/:id', async (nuxtParam, res) => {
+router.delete('/:id', async (req, res) => {   // <-- Ubah 'nuxtParam' menjadi 'req'
   const { id } = req.params;
   try {
     await db.query('DELETE FROM items WHERE id = ?', [id]);

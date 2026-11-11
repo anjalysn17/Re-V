@@ -152,18 +152,17 @@ export const chatService = {
       return [];
     }
   },
-
   getMessages: async (conversationId: string) => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/chat/messages/${conversationId}`);
       const data = await res.json();
+      // KEMBALIKAN KE AWAL: Array pesan
       return data.success ? data.data : [];
     } catch (error) {
       console.error('Error fetching messages:', error);
       return [];
     }
   },
-
   sendMessage: async (messageData: any) => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/chat/messages`, {
@@ -172,14 +171,13 @@ export const chatService = {
         body: JSON.stringify(messageData),
       });
       const data = await res.json();
-      // Mengembalikan data pesan baru agar langsung bisa dirender di frontend
-      return data.success ? { ...messageData, id: data.msgId, waktu: 'Baru saja' } : null;
+      // PERBAIKAN DI SINI: Gunakan data.data.id
+      return data.success ? { ...messageData, id: data.data.id, waktu: data.data.waktu } : null;
     } catch (error) {
       console.error('Error sending message:', error);
       throw error;
     }
   },
-
   markAsRead: async (conversationId: string, userId: string) => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/chat/conversations/${conversationId}/read`, {
@@ -202,14 +200,14 @@ export const getDB = () => {
   try {
     const local = localStorage.getItem('rev_fallback_db');
     if (local) return JSON.parse(local);
-  } catch {}
+  } catch { }
   return { users: [], items: [], offers: [], conversations: [], messages: [], notifications: [], cart: [] };
 };
 
 export const saveDB = (dbData: any) => {
   try {
     localStorage.setItem('rev_fallback_db', JSON.stringify(dbData));
-  } catch {}
+  } catch { }
 };
 
 export const generateId = (prefix: string, list: any[]) => {

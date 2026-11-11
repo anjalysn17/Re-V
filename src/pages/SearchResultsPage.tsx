@@ -47,8 +47,7 @@ export default function SearchResultsPage({ query, onNavigate }: SearchResultsPa
     price: `Rp ${item.harga.toLocaleString('id-ID')}`,
     location: (item.lokasi || 'Kampus UNNES').split(',')[0],
     img: item.foto,
-    grade: item.kondisi.includes('A') ? 'A' : item.kondisi.includes('B') ? 'B' : item.kondisi.includes('C') ? 'C' : 'A',
-    barter: item.status === 'barter' || item.status === 'keduanya',
+    grade: item.kondisi.match(/Grade ([A-C])/) ? item.kondisi.match(/Grade ([A-C])/)[1] : 'A', barter: item.status === 'barter' || item.status === 'keduanya',
     sold: (idx % 8) + 2,
     kategori: item.kategori || 'Lainnya',
   }));
