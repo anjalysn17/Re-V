@@ -7,11 +7,11 @@ interface HomePageProps {
 }
 
 const categoryCards = [
-  { icon: '/elektronik.jpg', label: 'Elektronik', count: '240+ barang', color: '#3a6ea5' },
-  { icon: '/bukk.jpg', label: 'Buku & Alat Tulis', count: '580+ barang', color: '#7a5c3b' },
-  { icon: '/bajuu.jpg', label: 'Fashion', count: '310+ barang', color: '#9b4b6a' },
-  { icon: '/perlengkapan.jpg', label: 'Perlengkapan', count: '190+ barang', color: '#567257' },
-  { icon: '/tas.jpg', label: 'Tas', count: '140+ barang', color: '#8b7355' },
+  { icon: '/elektronik.jpg', label: 'Elektronik', color: '#3a6ea5' },
+  { icon: '/bukk.jpg', label: 'Buku & Alat Tulis', color: '#7a5c3b' },
+  { icon: '/bajuu.jpg', label: 'Fashion', color: '#9b4b6a' },
+  { icon: '/perlengkapan.jpg', label: 'Perlengkapan', color: '#567257' },
+  { icon: '/tas.jpg', label: 'Tas', color: '#8b7355' },
 ];
 
 export default function HomePage({ onNavigate }: HomePageProps) {
@@ -35,15 +35,14 @@ export default function HomePage({ onNavigate }: HomePageProps) {
   }, []);
 
   // Memetakan data dari backend ke format yang dibutuhkan UI
-  const allProducts = items.map((item: any, idx: number) => ({
+  const allProducts = items.map((item: any) => ({
     id: item.id,
-    name: item.nama_barang, // Di skema backend namanya nama_barang, bukan nama
+    name: item.nama_barang, 
     price: `Rp ${item.harga.toLocaleString('id-ID')}`,
-    // Jika tidak ada lokasi spesifik di item, bisa fallback ke lokasi default
     location: item.lokasi ? item.lokasi.split(',')[0] : 'Kampus UNNES',
     img: item.foto,
-    grade: item.kondisi.match(/Grade ([A-C])/) ? item.kondisi.match(/Grade ([A-C])/)[1] : 'A', barter: item.status === 'barter' || item.status === 'keduanya',
-    sold: (idx % 8) + 2,
+    grade: item.kondisi?.match(/Grade ([A-C])/) ? item.kondisi.match(/Grade ([A-C])/)[1] : 'A', 
+    barter: item.status === 'barter' || item.status === 'keduanya',
     kategori: item.kategori || 'Lainnya',
   }));
 
@@ -97,35 +96,38 @@ export default function HomePage({ onNavigate }: HomePageProps) {
           Kategori
         </h2>
         <div className="flex items-center gap-3 overflow-x-auto pb-2">
-          {categoryCards.map(cat => (
-            <button
-              key={cat.label}
-              onClick={() => onNavigate('category', cat.label)}
-              className="group w-36 shrink-0 flex flex-col items-center justify-between py-3 px-2 rounded-2xl transition-all duration-200 hover:-translate-y-1 hover:shadow-md border bg-white cursor-pointer"
-              style={{
-                borderColor: 'var(--color-border)',
-              }}
-            >
-              {/* Kotak Gambar */}
-              <div className="w-20 h-20 rounded-xl flex items-center justify-center overflow-hidden bg-gray-50 group-hover:bg-gray-100/80 transition-colors p-1.5">
-                <img
-                  src={cat.icon}
-                  alt={cat.label}
-                  className="w-full h-full object-contain drop-shadow-sm group-hover:scale-105 transition-transform duration-200"
-                />
-              </div>
+          {categoryCards.map(cat => {
+            const count = items.filter(i => (i.kategori || 'Lainnya') === cat.label).length;
+            return (
+              <button
+                key={cat.label}
+                onClick={() => onNavigate('category', cat.label)}
+                className="group w-36 shrink-0 flex flex-col items-center justify-between py-3 px-2 rounded-2xl transition-all duration-200 hover:-translate-y-1 hover:shadow-md border bg-white cursor-pointer"
+                style={{
+                  borderColor: 'var(--color-border)',
+                }}
+              >
+                {/* Kotak Gambar */}
+                <div className="w-20 h-20 rounded-xl flex items-center justify-center overflow-hidden bg-gray-50 group-hover:bg-gray-100/80 transition-colors p-1.5">
+                  <img
+                    src={cat.icon}
+                    alt={cat.label}
+                    className="w-full h-full object-contain drop-shadow-sm group-hover:scale-105 transition-transform duration-200"
+                  />
+                </div>
 
-              {/* Teks Kategori */}
-              <div className="text-center mt-2">
-                <p className="text-xs font-bold text-gray-800 leading-tight group-hover:text-[var(--color-primary)] transition-colors">
-                  {cat.label}
-                </p>
-                <p className="text-[10px] mt-0.5 text-gray-400 font-medium">
-                  {cat.count}
-                </p>
-              </div>
-            </button>
-          ))}
+                {/* Teks Kategori */}
+                <div className="text-center mt-2">
+                  <p className="text-xs font-bold text-gray-800 leading-tight group-hover:text-[var(--color-primary)] transition-colors">
+                    {cat.label}
+                  </p>
+                  <p className="text-[10px] mt-0.5 text-gray-400 font-medium">
+                    {count} barang
+                  </p>
+                </div>
+              </button>
+            )
+          })}
         </div>
       </div>
 
@@ -212,10 +214,10 @@ export default function HomePage({ onNavigate }: HomePageProps) {
               <button
                 key={product.id}
                 onClick={() => onNavigate('product', { productId: product.id })}
-                className="rounded-2xl border overflow-hidden text-left group hover:shadow-lg hover:-translate-y-1 transition-all duration-200"
+                className="rounded-2xl border overflow-hidden text-left group hover:shadow-lg hover:-translate-y-1 transition-all duration-200 flex flex-col h-full"
                 style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
               >
-                <div className="relative aspect-square overflow-hidden bg-gray-100">
+                <div className="relative aspect-square overflow-hidden bg-gray-100 shrink-0">
                   <img
                     src={product.img}
                     alt={product.name}
@@ -241,7 +243,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                     )}
                   </div>
                 </div>
-                <div className="p-3">
+                <div className="p-3 flex flex-col flex-1">
                   <p className="text-sm font-semibold leading-snug line-clamp-2 min-h-[2.5rem]">{product.name}</p>
                   <p
                     className="text-base font-black mt-1.5"
@@ -249,7 +251,9 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                   >
                     {product.price}
                   </p>
-                  <div className="flex items-center justify-between mt-2">
+                  
+                  {/* Bagian bawah card diubah agar lokasi mengisi ruang dengan rapi, label 'terjual' dihilangkan */}
+                  <div className="flex items-center justify-between mt-auto pt-2">
                     <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#f0ebe2] text-[11px] text-gray-600">
                       <svg
                         className="w-3 h-3 shrink-0 fill-current text-gray-500"
@@ -261,9 +265,8 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                           clipRule="evenodd"
                         />
                       </svg>
-                      <span>{product.location}</span>
+                      <span className="truncate max-w-[80px]">{product.location}</span>
                     </div>
-                    <span className="text-[10px]" style={{ color: 'var(--color-muted)' }}>{product.sold} terjual</span>
                   </div>
                 </div>
               </button>

@@ -54,9 +54,9 @@ export async function createOfferAndConversation({
     const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
     const itemNameMy = myItem.nama_barang || myItem.nama || 'Barang';
     const itemNameTarget = targetItem.nama_barang || targetItem.nama || 'Barang';
-    
-    const offerMsgText = `Tawaran Barter Resmi\n\nSaya tawarkan: ${itemNameMy} (Rp ${(myItem.harga || 0).toLocaleString('id-ID')})\nUntuk: ${itemNameTarget} (Rp ${(targetItem.harga || 0).toLocaleString('id-ID')})\nEstimasi selisih: Rp ${priceDiff.toLocaleString('id-ID')}`;
 
+    const finalOfferId = offerResult.offerId || offerResult.data?.id || 'OFR-NEW';
+    const offerMsgText = `Tawaran Barter Resmi\n\nSaya tawarkan: ${itemNameMy} (Rp ${(myItem.harga || 0).toLocaleString('id-ID')})\nUntuk: ${itemNameTarget} (Rp ${(targetItem.harga || 0).toLocaleString('id-ID')})\nEstimasi selisih: Rp ${priceDiff.toLocaleString('id-ID')}\n[OFFERID:${finalOfferId}]`;
     // Kirim pesan tawaran (buat room baru jika belum ada)
     const msgRes = await chatService.sendMessage({
       id_conversation: convId || undefined,
@@ -78,7 +78,7 @@ export async function createOfferAndConversation({
       offerId: offerResult.offerId || offerResult.data?.id || 'OFR-NEW',
     };
 
-    
+
   } catch (error: any) {
     console.error('Error in createOfferAndConversation:', error);
     return { success: false, message: error.message || 'Terjadi kesalahan sistem saat memproses barter.' };
@@ -123,7 +123,7 @@ export async function getOrCreateConversation({
         waktu: timeStr,
         type: 'text',
       });
-      
+
       // Ambil ID obrolan baru dari respons backend
       if (msgRes && msgRes.conversationId) {
         convId = msgRes.conversationId;

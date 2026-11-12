@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import ReturnModal from '../components/ReturnModal';
 import { useAuth } from '../context/AuthContext';
-import { itemService, barterService, chatService } from '../services/db';
+import { itemService, chatService } from '../services/db'; // barterService dihapus karena ditangani utils
 import { APP_NAME } from '../constants/brand';
-import { getOrCreateConversation } from '../utils/barterActions';
+import { getOrCreateConversation, createOfferAndConversation } from '../utils/barterActions';
 
 interface ProductDetailProps {
   productId?: string;
@@ -36,40 +36,31 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
     const fetchDetailData = async () => {
       if (!productId) return;
       setIsLoading(true);
-
       try {
-        // 1. Ambil detail produk
         const itemData = await itemService.getItemById(productId);
         setItem(itemData);
-
-        // TODO: Backend sebaiknya mengembalikan info seller bersamaan dengan getItemById
-        // Untuk sementara, jika data owner tidak lengkap dari backend, kita kasih fallback
         setSeller({
           id: itemData?.id_pemilik,
           nama: itemData?.owner_name || `Pengguna ${APP_NAME}`,
           foto_profil: itemData?.owner_photo || '/assets/seed-images/avatar-placeholder.svg',
           lokasi: itemData?.owner_location || itemData?.lokasi,
-          rating: 4.8 // Mock rating sementara
+          rating: 4.8
         });
 
-        // 2. Jika user login, ambil daftar barang milik user yang bisa dibarter
+        // HANYA PANGGIL BARANG MILIK USER BERSTATUS BARTER
         if (currentUser) {
-          const allMyItems = await itemService.getAllItems();
-          // Filter barang milik current user yang berstatus barter/keduanya
-          const myBarterReady = allMyItems.filter((i: any) =>
-            i.id_pemilik === currentUser.id &&
-            (i.status === 'barter' || i.status === 'keduanya')
-          );
-          setMyBarterItems(myBarterReady);
+          const myBarterReady = await itemService.getAllItems({
+            owner: currentUser.id,
+            status: 'barter,keduanya'
+          });
+          setMyBarterItems(myBarterReady || []);
         }
-
       } catch (error) {
         console.error("Gagal mengambil detail produk:", error);
       } finally {
         setIsLoading(false);
       }
     };
-
     fetchDetailData();
   }, [productId, currentUser]);
 
@@ -140,20 +131,21 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
 
     setIsSubmitting(true);
     try {
-      const offerData = {
-        item_ditawarkan: myItem.id,
-        item_diminta: item.id,
-        id_pengirim: currentUser.id,
-        id_penerima: item.id_pemilik,
-        selisih_harga: myItem.harga - item.harga
-      };
-
-      const result = await barterService.createOffer(offerData);
+      const result = await createOfferAndConversation({
+        myItem: myItem,
+        targetItem: item,
+        currentUser: currentUser
+      });
 
       if (result.success) {
         showToast('✓ Tawaran barter berhasil dikirim!');
         setBarterOpen(false);
-        onNavigate('barter');
+        // Pastikan membawa targetUserId dan targetItemId
+        onNavigate('chat', { 
+          conversationId: result.convId, 
+          targetUserId: item.id_pemilik, 
+          targetItemId: item.id 
+        });
       } else {
         showToast(result.message || 'Gagal mengirim tawaran barter.');
       }
@@ -175,7 +167,12 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
     setIsSubmitting(false);
 
     if (result.success && result.convId) {
-      onNavigate('chat', { conversationId: result.convId });
+      // Pastikan membawa targetUserId dan targetItemId
+      onNavigate('chat', { 
+        conversationId: result.convId, 
+        targetUserId: item.id_pemilik, 
+        targetItemId: item.id 
+      });
     } else {
       showToast(result.message || 'Gagal membuka obrolan');
     }
@@ -197,7 +194,12 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
     setIsSubmitting(false);
 
     if (result.success && result.convId) {
-      onNavigate('chat', { conversationId: result.convId });
+      // Pastikan membawa targetUserId dan targetItemId
+      onNavigate('chat', { 
+        conversationId: result.convId, 
+        targetUserId: item.id_pemilik, 
+        targetItemId: item.id 
+      });
     } else {
       showToast('Gagal memulai obrolan COD');
     }
@@ -209,20 +211,20 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
       openAuthModal('login');
       return;
     }
-    
+
     const cartKey = `rev_cart_${currentUser.id}`;
     // Ambil keranjang yang sudah ada, atau buat array kosong jika belum ada
     const cart = JSON.parse(localStorage.getItem(cartKey) || '[]');
-    
+
     // Cek agar barang yang sama tidak masuk dua kali
     if (!cart.find((c: any) => c.id_item === item.id)) {
-      cart.push({ 
-        id: `CRT-${Date.now()}`, 
-        id_item: item.id, 
-        ditambahkan_pada: new Date().toISOString() 
+      cart.push({
+        id: `CRT-${Date.now()}`,
+        id_item: item.id,
+        ditambahkan_pada: new Date().toISOString()
       });
       localStorage.setItem(cartKey, JSON.stringify(cart));
-      
+
       if (onCartUpdated) onCartUpdated();
       showToast('Barang berhasil disimpan ke keranjang!');
     } else {
@@ -594,16 +596,16 @@ export default function ProductDetail({ productId, onNavigate, onOpenAddItem, on
                   <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
                     {myBarterItems.map(myItem => {
                       const isSelected = selectedMyItemId === myItem.id;
-                      const priceDiff = Math.abs(myItem.harga - item.harga);
-                      
+                      const priceDiff = Math.abs(myItem.harga - item.harga); // Perbaikan Typo disini
+
                       return (
                         <button
                           key={myItem.id}
                           type="button"
                           onClick={() => setSelectedMyItemId(isSelected ? null : myItem.id)}
                           className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${isSelected
-                              ? 'border-gray-900 bg-gray-50'
-                              : 'border-gray-200 bg-white hover:border-gray-300'
+                            ? 'border-gray-900 bg-gray-50'
+                            : 'border-gray-200 bg-white hover:border-gray-300'
                             }`}
                         >
                           <img

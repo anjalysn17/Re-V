@@ -14,7 +14,6 @@ import CartPage from './pages/CartPage';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import AuthModal from './components/AuthModal';
 import AddItemModal from './components/AddItemModal';
-import ResetDemoButton from './components/ResetDemoButton';
 
 export interface NavigationParams {
   category?: string;
@@ -81,9 +80,9 @@ function MainLayout() {
     setPage(p as Page);
   };
 
-  useEffect(() => {
-    (window as any).revNavigate = navigate;
-  }, []);
+// useEffect(() => {
+//   (window as any).revNavigate = navigate;
+//}, []);
 
   // Hitung jumlah item keranjang dengan membaca localStorage milik user yang sedang login
   const cartCount = currentUser 
@@ -133,8 +132,17 @@ function MainLayout() {
             onCartUpdated={handleCartUpdated}
           />
         )}
-        {page === 'profile' && <ProfilePage onNavigate={navigate} />}
-        {page === 'orders' && <OrdersPage />}
+        {page === 'profile' && (
+          currentUser 
+            ? <ProfilePage onNavigate={navigate} /> 
+            : <div className="text-center py-20 font-bold text-red-500">Akses Ditolak: Harap masuk (login) terlebih dahulu.</div>
+        )}
+        
+        {page === 'orders' && (
+          currentUser 
+            ? <OrdersPage /> 
+            : <div className="text-center py-20 font-bold text-red-500">Akses Ditolak: Harap masuk (login) terlebih dahulu.</div>
+        )}
         {page === 'barter' && (
           <SmartBarter
             onNavigate={navigate}
@@ -151,7 +159,11 @@ function MainLayout() {
             onNavigate={navigate}
           />
         )}
-        {page === 'admin' && <AdminDashboard onNavigate={navigate} />}
+        {page === 'admin' && (
+          currentUser?.role === 'admin' 
+            ? <AdminDashboard onNavigate={navigate} /> 
+            : <div className="text-center py-20 font-bold text-red-500">Akses Ditolak: Halaman ini khusus Administrator.</div>
+        )}
         {page === 'my-items' && (
           <MyItemsPage
             key={refreshKey}
@@ -168,7 +180,6 @@ function MainLayout() {
         onClose={() => setIsAddItemOpen(false)}
         onItemAdded={() => setRefreshKey(prev => prev + 1)}
       />
-      <ResetDemoButton />
     </div>
   );
 }

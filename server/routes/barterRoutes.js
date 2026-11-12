@@ -2,10 +2,16 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const { randomUUID } = require('crypto');
+const verifyToken = require('../middleware/auth');
 
-// GET /api/barter - Ambil semua penawaran barter
-router.get('/', async (req, res) => {
+// GET /api/barter - Khusus Admin (Mencegah kebocoran data semua offers)
+router.get('/', verifyToken, async (req, res) => {
   try {
+    const [users] = await db.query('SELECT role FROM users WHERE id = ?', [req.user.id]);
+    if (users.length === 0 || users[0].role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Akses ditolak: Endpoint khusus administrator' });
+    }
+
     const [rows] = await db.query('SELECT * FROM offers ORDER BY created_at DESC');
     res.json({ success: true, data: rows });
   } catch (error) {
@@ -13,9 +19,14 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/barter/user/:userId - Ambil penawaran barter berdasarkan user (pengirim atau penerima)
-router.get('/user/:userId', async (req, res) => {
+// GET /api/barter/user/:userId - Ambil penawaran barter milik pengguna tertentu (Protected)
+router.get('/user/:userId', verifyToken, async (req, res) => {
   const { userId } = req.params;
+  
+  if (userId !== req.user.id) {
+    return res.status(403).json({ success: false, message: 'Akses ditolak: Tidak dapat melihat riwayat barter orang lain' });
+  }
+
   try {
     const [rows] = await db.query(
       'SELECT * FROM offers WHERE id_pengirim = ? OR id_penerima = ? ORDER BY created_at DESC',
@@ -27,9 +38,11 @@ router.get('/user/:userId', async (req, res) => {
   }
 });
 
-// POST /api/barter - Kirim penawaran barter baru
-router.post('/', async (req, res) => {
-  const { id, item_ditawarkan, item_diminta, id_pengirim, id_penerima, selisih_harga } = req.body;
+// POST /api/barter - Kirim penawaran barter baru (Protected)
+router.post('/', verifyToken, async (req, res) => {
+  const id_pengirim = req.user.id; // Identitas dari token (Mencegah Spoofing Pengirim)
+  const { id, item_ditawarkan, item_diminta, id_penerima, selisih_harga } = req.body;
+
   try {
     const offerId = id || `OFR-${randomUUID().slice(0, 8)}`;
     await db.query(
@@ -38,26 +51,28 @@ router.post('/', async (req, res) => {
       [offerId, item_ditawarkan, item_diminta, id_pengirim, id_penerima, selisih_harga || 0]
     );
 
-    // Ambil data offer yang baru dibuat untuk dikembalikan ke client
     const [newRows] = await db.query('SELECT * FROM offers WHERE id = ?', [offerId]);
-    const newOffer = newRows[0] || { id: offerId };
-
-    res.status(201).json({
-      success: true,
-      message: 'Penawaran barter berhasil dikirim!',
-      offerId,
-      data: newOffer
-    });
+    res.status(201).json({ success: true, message: 'Penawaran barter berhasil dikirim!', offerId, data: newRows[0] || { id: offerId } });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Gagal mengirim penawaran barter', error: error.message });
   }
 });
 
-// Handler untuk update status barter (mendukung 'diterima' / 'ditolak' / 'accepted' / 'rejected')
+// Handler untuk update status barter (Protected + Cek Otorisasi Kepemilikan)
 const updateStatusHandler = async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
+  const userId = req.user.id;
+
   try {
+    const [offers] = await db.query('SELECT id_penerima, id_pengirim FROM offers WHERE id = ?', [id]);
+    if (offers.length === 0) return res.status(404).json({ success: false, message: 'Penawaran tidak ditemukan' });
+
+    // Hanya penerima atau pengirim (yang ingin membatalkan) yang berhak mengubah status
+    if (offers[0].id_penerima !== userId && offers[0].id_pengirim !== userId) {
+      return res.status(403).json({ success: false, message: 'Akses ditolak: Kamu tidak berhak mengubah status penawaran ini' });
+    }
+
     await db.query('UPDATE offers SET status = ? WHERE id = ?', [status, id]);
     res.json({ success: true, message: `Status penawaran berhasil diubah menjadi ${status}` });
   } catch (error) {
@@ -65,8 +80,7 @@ const updateStatusHandler = async (req, res) => {
   }
 };
 
-// Mendukung PUT dan PATCH sekaligus agar aman dari perbedaan method di frontend
-router.put('/:id/status', updateStatusHandler);
-router.patch('/:id/status', updateStatusHandler);
+router.put('/:id/status', verifyToken, updateStatusHandler);
+router.patch('/:id/status', verifyToken, updateStatusHandler);
 
 module.exports = router;

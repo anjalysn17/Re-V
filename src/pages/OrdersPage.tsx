@@ -17,28 +17,6 @@ export const OrdersPage: React.FC = () => {
 
   // Data simulasi pesanan / transaksi pengguna
   const [orders, setOrders] = useState<OrderItem[]>([
-    {
-      id: 'ORD-001',
-      itemTitle: 'Kipas Angin Kos Portable',
-      price: 50000,
-      type: 'Beli',
-      counterpart: 'Ficko (Mahasiswa Teknik)',
-      codSpot: 'Kantin Utama FMIPA UNNES',
-      status: 'Siap COD',
-      date: '08 November 2026',
-      image: '/elektronik.jpg'
-    },
-    {
-      id: 'ORD-002',
-      itemTitle: 'Buku Kalkulus Purcell Ed 9',
-      price: 0,
-      type: 'Barter',
-      counterpart: 'Rahas',
-      codSpot: 'Gazebo Utama Perpustakaan Pusat UNNES',
-      status: 'Selesai',
-      date: '02 November 2026',
-      image: '/bukk.jpg'
-    }
   ]);
 
   const handleCancelOrder = (id: string) => {
@@ -92,8 +70,8 @@ export const OrdersPage: React.FC = () => {
       <div className="space-y-4">
         {filteredOrders.length === 0 ? (
           <div className="text-center py-16 bg-white rounded-2xl border border-dashed text-gray-400">
-            <p className="text-base font-medium">Tidak ada transaksi dalam kategori ini.</p>
-            <p className="text-xs text-gray-400 mt-1">Mulai cari barang atau ajukan kesepakatan dengan mahasiswa lain.</p>
+            <p className="text-base font-medium">Fitur Checkout & Pesanan Segera Hadir 🚧</p>
+            <p className="text-xs text-gray-400 mt-1">Saat ini transaksi dilakukan mandiri via chat (COD). Sistem Escrow sedang dalam pengembangan.</p>
           </div>
         ) : (
           filteredOrders.map((order) => (
@@ -109,11 +87,10 @@ export const OrdersPage: React.FC = () => {
                     <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded border border-emerald-200">
                       {order.type}
                     </span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                      order.status === 'Siap COD' ? 'bg-amber-100 text-amber-800' :
-                      order.status === 'Selesai' ? 'bg-green-100 text-green-700' :
-                      order.status === 'Menunggu Konfirmasi' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'
-                    }`}>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${order.status === 'Siap COD' ? 'bg-amber-100 text-amber-800' :
+                        order.status === 'Selesai' ? 'bg-green-100 text-green-700' :
+                          order.status === 'Menunggu Konfirmasi' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'
+                      }`}>
                       {order.status}
                     </span>
                     <span className="text-xs text-gray-400">ID: {order.id}</span>

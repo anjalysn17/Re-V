@@ -16,25 +16,29 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
 
   // State lokal untuk data diri
   const [profileData, setProfileData] = useState({
-    name: currentUser?.nama || currentUser?.nama || 'Haikal Akhsan Darmawan',
-    email: currentUser?.email || 'haikalakhsan@students.unnes.ac.id',
-    phone: currentUser?.phone || '081234567890',
-    location: currentUser?.lokasi || 'Sekaran, Gunungpati, Semarang',
-    major: 'Teknik Informatika',
-    faculty: 'FMIPA UNNES',
+    name: currentUser?.nama || 'Pengguna',
+    email: currentUser?.email || 'Belum diatur',
+    phone: currentUser?.phone || 'Belum diatur',
+    location: currentUser?.lokasi || 'Belum diatur',
+    major: '-',
+    faculty: '-',
   });
 
   useEffect(() => {
-    if (currentUser) {
-      setProfileData({
-        name: currentUser.nama || currentUser.nama || 'Haikal Akhsan Darmawan',
-        email: currentUser.email || 'haikalakhsan@students.unnes.ac.id',
-        phone: currentUser.phone || '081234567890',
-        location: currentUser.lokasi || 'Sekaran, Gunungpati, Semarang',
-        major: 'Teknik Informatika',
-        faculty: 'FMIPA UNNES',
-      });
-    }
+    const fetchUserItems = async () => {
+      if (!currentUser) return;
+      setIsLoadingItems(true);
+      try {
+        // HANYA TARIK BARANG MILIK USER INI (MENGHEMAT PAYLOAD 90%)
+        const mine = await itemService.getAllItems({ owner: currentUser.id, limit: 50 });
+        setUserItems(mine || []);
+      } catch (error) {
+        console.error("Gagal memuat barang pengguna:", error);
+      } finally {
+        setIsLoadingItems(false);
+      }
+    };
+    fetchUserItems();
   }, [currentUser]);
 
   // Ambil daftar barang milik user dari backend Railway
@@ -96,8 +100,8 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold text-gray-900">{profileData.name}</h1>
-              <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-800 text-xs font-semibold rounded-full border border-emerald-300">
-                ✓ Verified Student
+              <span className="px-2.5 py-0.5 bg-gray-100 text-gray-600 text-xs font-semibold rounded-full border border-gray-200">
+                Verifikasi KTM (Segera Hadir)
               </span>
             </div>
             <p className="text-sm text-gray-500 mt-0.5">{profileData.email}</p>
@@ -184,7 +188,7 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
             </div>
             <div>
               <p className="text-xs text-gray-400 font-medium">Status Verifikasi Mahasiswa</p>
-              <p className="font-semibold text-emerald-600 mt-0.5">Terverifikasi via KTM & Email Institusi UNNES</p>
+              <p className="font-semibold text-gray-500 mt-0.5">Integrasi Email Institusi (Segera Hadir)</p>
             </div>
             <div>
               <p className="text-xs text-gray-400 font-medium">Domisili Kampus</p>

@@ -1,5 +1,13 @@
 const jwt = require('jsonwebtoken');
-const JWT_SECRET = process.env.JWT_SECRET || 'rev_secret_key_2026';
+require('dotenv').config();
+
+// Hentikan startup jika JWT_SECRET kosong
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL ERROR: JWT_SECRET belum diset di environment variables!');
+  process.exit(1);
+}
+
+const JWT_SECRET = process.env.JWT_SECRET;
 
 module.exports = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];

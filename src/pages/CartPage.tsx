@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { itemService, barterService } from '../services/db';
 import Footer from '../components/Footer';
+import { createOfferAndConversation } from '../utils/barterActions';
 
 interface CartPageProps {
   onNavigate: (page: string, params?: any) => void;
@@ -91,23 +92,23 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
     if (!barterTargetItem || !selectedMyItemId) return;
     const myItem = myItems.find(i => i.id === selectedMyItemId);
     if (!myItem) return;
+
     setIsSubmittingOffer(true);
     try {
-      const offerData = {
-        item_ditawarkan: myItem.id,
-        item_diminta: barterTargetItem.id,
-        id_pengirim: currentUser.id,
-        id_penerima: barterTargetItem.id_pemilik,
-        selisih_harga: (myItem.harga || 0) - (barterTargetItem.harga || 0),
-      };
-      const result = await barterService.createOffer(offerData);
+      const result = await createOfferAndConversation({
+        myItem: myItem,
+        targetItem: barterTargetItem,
+        currentUser: currentUser
+      });
+
       if (result.success) {
         setBarterTargetItem(null);
         setSelectedMyItemId('');
-        setToastMsg('✓ Tawaran barter berhasil dikirim!');
+        setToastMsg('🎉 Tawaran barter berhasil dikirim!');
         setTimeout(() => setToastMsg(''), 3000);
         if (onCartUpdated) onCartUpdated();
-        onNavigate('chat', { targetUserId: barterTargetItem.id_pemilik, targetItemId: barterTargetItem.id });
+        // Pastikan mengirim ID lawan!
+        onNavigate('chat', { conversationId: result.convId, targetUserId: barterTargetItem.id_pemilik, targetItemId: barterTargetItem.id });
       } else {
         setToastMsg(result.message || 'Gagal mengirim tawaran.');
         setTimeout(() => setToastMsg(''), 3000);

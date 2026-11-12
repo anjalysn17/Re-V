@@ -5,7 +5,7 @@ export default function Footer() {
     <footer className="w-full border-t border-gray-200 mt-16 text-gray-600 text-xs">
       {/* Konten Menu disebar penuh ke kanan-kiri (justify-between) */}
       <div className="w-full px-8 py-10 flex flex-col md:flex-row justify-between gap-8">
-        
+
         {/* Kolom 1: Layanan Pelanggan */}
         <div>
           <h4 className="font-bold text-gray-800 text-[13px] mb-4 tracking-wider">LAYANAN PELANGGAN</h4>
@@ -45,7 +45,7 @@ export default function Footer() {
           <h4 className="font-bold text-gray-800 text-[13px] mb-4 tracking-wider">KEAMANAN TRANSAKSI</h4>
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-gray-800 font-semibold text-xs">
-              <span>Verifikasi Email SSO</span>
+              <span>Verifikasi Email SSO <span className="bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded text-[9px] ml-1">SEGERA HADIR</span></span>
             </div>
             <p className="text-gray-500 leading-relaxed text-[11px]">
               Seluruh pengguna terikat akun kampus aktif untuk mencegah penipuan dan menjamin transaksi aman.

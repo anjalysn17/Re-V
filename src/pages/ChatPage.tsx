@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { chatService } from '../services/db';
+import { chatService, barterService } from '../services/db';
 import { APP_NAME } from '../constants/brand';
+
 
 interface ChatPageProps {
   openConversationId?: string;
@@ -66,10 +67,10 @@ export default function ChatPage({ openConversationId, targetUserId, targetItemI
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
- const activeConversation = useMemo(() => {
+  const activeConversation = useMemo(() => {
     const found = conversations.find(c => c.id === activeConvId);
     if (found) return found;
-    
+
     // Jika kita sedang membuat obrolan baru dari halaman produk
     if (activeConvId === 'CONV-NEW' || (targetUserId && !activeConvId)) {
       return {
@@ -83,10 +84,10 @@ export default function ChatPage({ openConversationId, targetUserId, targetItemI
 
   const sendMessage = async (text: string, type: 'text' | 'offer' | 'system' = 'text') => {
     if (!text.trim() || !currentUser) return; // Hapus syarat activeConvId agar bisa buat room baru
-    
+
     try {
       const isNewConv = activeConvId === 'CONV-NEW' || !activeConvId;
-      
+
       const newMessage = {
         id_conversation: isNewConv ? undefined : activeConvId,
         targetUserId: isNewConv ? targetUserId : undefined,
@@ -138,7 +139,7 @@ export default function ChatPage({ openConversationId, targetUserId, targetItemI
     );
   }
 
-  if (!isLoadingConversations && conversations.length === 0) {
+  if (!isLoadingConversations && conversations.length === 0 && activeConvId !== 'CONV-NEW' && !targetUserId) {
     return (
       <div className="max-w-screen-xl mx-auto px-4 py-12">
         <div
@@ -325,38 +326,50 @@ export default function ChatPage({ openConversationId, targetUserId, targetItemI
                       {msg.type === 'offer' ? (
                         <div
                           className="max-w-[75%] rounded-2xl p-3.5 shadow-sm border"
-                          style={{
-                            background: 'var(--color-card)',
-                            color: 'var(--color-text)',
-                            borderColor: 'var(--color-border)',
-                            borderBottomLeftRadius: isMe ? undefined : 4,
-                            borderBottomRightRadius: isMe ? 4 : undefined,
-                          }}
+                          style={{ /* ... */ }}
                         >
                           <div className="flex items-center gap-1.5 mb-2">
-                            <p className="text-xs font-bold text-[#567257]">
-                              Tawaran Barter Resmi
-                            </p>
+                            <p className="text-xs font-bold text-[#567257]">Tawaran Barter Resmi</p>
                           </div>
                           <div className="text-xs space-y-1.5">
-                            {msg.teks.split('\n').filter((l: string) => l && !l.includes('Tawaran Barter')).map((line: string, i: number) => (
+                            {/* FILTER tag [OFFERID:...] agar tidak tampil di UI */}
+                            {msg.teks.split('\n').filter((l: string) => l && !l.includes('Tawaran Barter') && !l.startsWith('[OFFERID:')).map((line: string, i: number) => (
                               <p key={i} style={{ color: line.toLowerCase().includes('selisih') ? 'var(--color-accent)' : undefined, fontWeight: line.includes(':') ? 600 : 400 }}>
                                 {line}
                               </p>
                             ))}
+
                             {!isMe && (
                               <div className="flex gap-2 mt-3 pt-1 border-t" style={{ borderColor: 'var(--color-border)' }}>
                                 <button
                                   type="button"
-                                  onClick={() => sendMessage('Saya setuju dengan tawaran barter ini! Mari atur jadwal ketemuan/COD.')}
+                                  onClick={async () => {
+                                    // Ekstrak ID dari pesan tersembunyi
+                                    const offerMatch = msg.teks.match(/\[OFFERID:(.*?)\]/);
+                                    const offerId = offerMatch ? offerMatch[1] : null;
+
+                                    if (offerId) {
+                                      await barterService.updateOfferStatus(offerId, 'diterima');
+                                    }
+                                    sendMessage('Saya setuju dengan tawaran barter ini! Mari atur jadwal ketemuan/COD.');
+                                  }}
                                   className="flex-1 py-1.5 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-90 cursor-pointer shadow-xs"
                                   style={{ background: 'var(--color-primary)' }}
                                 >
                                   Terima Tawaran
                                 </button>
+
                                 <button
                                   type="button"
-                                  onClick={() => sendMessage('Bisa kita negosiasikan kembali untuk selisih harganya?')}
+                                  onClick={async () => {
+                                    const offerMatch = msg.teks.match(/\[OFFERID:(.*?)\]/);
+                                    const offerId = offerMatch ? offerMatch[1] : null;
+
+                                    if (offerId) {
+                                      await barterService.updateOfferStatus(offerId, 'ditolak');
+                                    }
+                                    sendMessage('Bisa kita negosiasikan kembali untuk selisih harganya?');
+                                  }}
                                   className="flex-1 py-1.5 rounded-lg text-xs font-bold border hover:bg-black/5 transition-colors cursor-pointer"
                                   style={{ borderColor: 'var(--color-border)', color: 'var(--color-muted)' }}
                                 >
@@ -452,9 +465,9 @@ export default function ChatPage({ openConversationId, targetUserId, targetItemI
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center p-6 text-gray-500 text-xs">
-            Pilih obrolan dari panel di sebelah kiri untuk melihat pesan.
-          </div>
+        <div className="flex-1 flex items-center justify-center p-6 text-gray-500 text-xs">
+          Pilih obrolan dari panel di sebelah kiri untuk melihat pesan.
+        </div>
         )}
       </div>
       {/* Review Modal */}

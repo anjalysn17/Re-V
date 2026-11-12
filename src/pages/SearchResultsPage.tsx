@@ -15,7 +15,8 @@ export default function SearchResultsPage({ query, onNavigate }: SearchResultsPa
     const fetchItems = async () => {
       setIsLoading(true);
       try {
-        const data = await itemService.getAllItems();
+        // FILTERING LANGSUNG DARI SERVER MENGGUNAKAN QUERY q
+        const data = await itemService.getAllItems({ q: query, limit: 50 });
         setItems(data || []);
       } catch (error) {
         console.error("Gagal mengambil data pencarian:", error);
@@ -24,30 +25,17 @@ export default function SearchResultsPage({ query, onNavigate }: SearchResultsPa
       }
     };
     fetchItems();
-  }, []);
+  }, [query]);
 
-  const trimmedQuery = (query || '').trim().toLowerCase();
-
-  // Filter barang yang nama ATAU deskripsi ATAU kategori-nya mengandung query (case-insensitive)
-  const filteredItems = items.filter(item => {
-    if (!trimmedQuery) return true;
-    const itemName = item.nama_barang || item.nama || '';
-    const itemDesc = item.deskripsi || '';
-    const itemCategory = item.kategori || '';
-
-    const matchName = itemName.toLowerCase().includes(trimmedQuery);
-    const matchDesc = itemDesc.toLowerCase().includes(trimmedQuery);
-    const matchCat = itemCategory.toLowerCase().includes(trimmedQuery);
-    return matchName || matchDesc || matchCat;
-  });
-
-  const products = filteredItems.map((item, idx) => ({
+  // Hapus blok filteredItems yang panjang, gunakan data API secara langsung
+  const products = items.map((item, idx) => ({
     id: item.id,
     name: item.nama_barang || item.nama,
-    price: `Rp ${item.harga.toLocaleString('id-ID')}`,
+    price: `Rp ${Number(item.harga).toLocaleString('id-ID')}`,
     location: (item.lokasi || 'Kampus UNNES').split(',')[0],
     img: item.foto,
-    grade: item.kondisi.match(/Grade ([A-C])/) ? item.kondisi.match(/Grade ([A-C])/)[1] : 'A', barter: item.status === 'barter' || item.status === 'keduanya',
+    grade: item.kondisi.match(/Grade ([A-C])/) ? item.kondisi.match(/Grade ([A-C])/)[1] : 'A',
+    barter: item.status === 'barter' || item.status === 'keduanya',
     sold: (idx % 8) + 2,
     kategori: item.kategori || 'Lainnya',
   }));
@@ -185,9 +173,6 @@ export default function SearchResultsPage({ query, onNavigate }: SearchResultsPa
                     </svg>
                     <span>{product.location}</span>
                   </div>
-                  <span className="text-[10px]" style={{ color: 'var(--color-muted)' }}>
-                    {product.sold} terjual
-                  </span>
                 </div>
               </div>
             </button>

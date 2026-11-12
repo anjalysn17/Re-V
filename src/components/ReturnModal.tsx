@@ -19,7 +19,10 @@ const mediationPoints = [
   { name: 'Security Post Gerbang Utama', note: 'Tersedia 24 jam', icon: '🛡️' },
 ];
 
-export default function ({ onClose }: Props) {
+export default function ReturnModal({ onClose }: Props) {
+  // Pindahkan useRef ke DALAM komponen utama
+  const claimNumber = useRef(`RTR-${Date.now().toString().slice(-6)}`);
+  
   const [step, setStep] = useState(1);
   const [selectedReason, setSelectedReason] = useState('');
   const [description, setDescription] = useState('');
@@ -46,7 +49,7 @@ export default function ({ onClose }: Props) {
             Klaim Berhasil Dikirim!
           </h3>
           <p className="text-sm mb-2" style={{ color: 'var(--color-muted)' }}>
-            Nomor Klaim: <span className="font-bold" style={{ color: 'var(--color-text)' }}>#RTR-2024-0892</span>
+            Nomor Klaim: <span className="font-bold text-gray-900">#{claimNumber.current}</span>
           </p>
           <p className="text-sm leading-relaxed mb-6" style={{ color: 'var(--color-muted)' }}>
             Tim {APP_NAME} akan meninjau klaimmu dalam 1×24 jam. Kamu akan dihubungi melalui chat untuk jadwal mediasi di kampus.
@@ -77,6 +80,9 @@ export default function ({ onClose }: Props) {
           </div>
           <button onClick={onClose} className="text-white/70 hover:text-white text-2xl leading-none">&times;</button>
         </div>
+        <div className="p-3 mx-5 mt-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs font-medium text-center">
+          🚧 Fitur Mediasi & Escrow saat ini dalam tahap pengembangan (Segera Hadir).
+        </div>
 
         {/* Step indicator */}
         <div className="flex border-b" style={{ borderColor: 'var(--color-border)' }}>
@@ -104,9 +110,9 @@ export default function ({ onClose }: Props) {
                 style={{ background: '#f8f4ee', borderColor: 'var(--color-border)' }}>
                 <img src="https://images.unsplash.com/photo-1496181133206-80ce9b88a853?w=80&h=80&fit=crop&auto=format"
                   alt="produk" className="w-10 h-10 rounded-lg object-cover" />
-                <div>
-                  <p className="text-xs font-bold">Laptop Lenovo ThinkPad E14 Gen 3</p>
-                  <p className="text-[11px] mt-0.5" style={{ color: 'var(--color-muted)' }}>Transaksi #TRX-2024-0441 · Rp 3.800.000</p>
+                <div className="flex-1">
+                  <p className="text-xs font-bold">Barang dari transaksi terkait</p>
+                  <p className="text-[11px] mt-0.5 text-gray-500">Data akan otomatis ditarik dari riwayat pesanan (Segera Hadir).</p>
                 </div>
               </div>
               <p className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>Pilih alasan pengajuan klaim:</p>
@@ -115,7 +121,7 @@ export default function ({ onClose }: Props) {
                   <button
                     key={r.id}
                     onClick={() => setSelectedReason(r.id)}
-                    className="w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all"
+                    className="w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer"
                     style={{
                       borderColor: selectedReason === r.id ? '#c0392b' : 'var(--color-border)',
                       background: selectedReason === r.id ? '#c0392b' + '0c' : '#f8f4ee',
@@ -188,14 +194,14 @@ export default function ({ onClose }: Props) {
                       <img src={src} alt={`bukti ${i + 1}`} className="w-full h-full object-cover" />
                       <button
                         onClick={() => setSelectedMedia(prev => prev.filter((_, j) => j !== i))}
-                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white text-xs flex items-center justify-center">
+                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white text-xs flex items-center justify-center cursor-pointer">
                         ×
                       </button>
                     </div>
                   ))}
                   <button
                     onClick={() => fileRef.current?.click()}
-                    className="aspect-square rounded-xl border-2 border-dashed flex items-center justify-center text-2xl"
+                    className="aspect-square rounded-xl border-2 border-dashed flex items-center justify-center text-2xl cursor-pointer"
                     style={{ borderColor: 'var(--color-border)', color: 'var(--color-muted)' }}>
                     +
                   </button>
@@ -231,7 +237,7 @@ export default function ({ onClose }: Props) {
                   <button
                     key={pt.name}
                     onClick={() => setSelectedMediation(pt.name)}
-                    className="w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all"
+                    className="w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer"
                     style={{
                       borderColor: selectedMediation === pt.name ? '#c0392b' : 'var(--color-border)',
                       background: selectedMediation === pt.name ? '#c0392b' + '0c' : '#f8f4ee',
@@ -266,7 +272,7 @@ export default function ({ onClose }: Props) {
           <div className="flex gap-2.5 mt-5">
             {step > 1 && (
               <button onClick={() => setStep(step - 1)}
-                className="flex-1 py-3 rounded-xl border font-bold text-sm transition-all hover:opacity-80"
+                className="flex-1 py-3 rounded-xl border font-bold text-sm transition-all hover:opacity-80 cursor-pointer"
                 style={{ borderColor: 'var(--color-border)', color: 'var(--color-muted)', fontFamily: 'var(--font-display)' }}>
                 ← Kembali
               </button>
@@ -275,7 +281,7 @@ export default function ({ onClose }: Props) {
               <button
                 onClick={() => setStep(step + 1)}
                 disabled={step === 1 && !selectedReason}
-                className="flex-1 py-3 rounded-xl font-bold text-sm text-white transition-all hover:opacity-90 disabled:opacity-40"
+                className="flex-1 py-3 rounded-xl font-bold text-sm text-white transition-all hover:opacity-90 disabled:opacity-40 cursor-pointer"
                 style={{ background: '#c0392b', fontFamily: 'var(--font-display)' }}>
                 Lanjut →
               </button>
@@ -283,7 +289,7 @@ export default function ({ onClose }: Props) {
               <button
                 onClick={handleSubmit}
                 disabled={!selectedMediation}
-                className="flex-1 py-3 rounded-xl font-bold text-sm text-white transition-all hover:opacity-90 disabled:opacity-40"
+                className="flex-1 py-3 rounded-xl font-bold text-sm text-white transition-all hover:opacity-90 disabled:opacity-40 cursor-pointer"
                 style={{ background: '#c0392b', fontFamily: 'var(--font-display)' }}>
                 🛡️ Kirim Klaim Retur
               </button>

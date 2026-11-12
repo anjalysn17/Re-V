@@ -2,6 +2,12 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcrypt');
 require('dotenv').config();
 
+// Hentikan startup jika ADMIN_PASSWORD kosong (Mencegah hardcode password terekspos)
+if (!process.env.ADMIN_PASSWORD) {
+  console.error('FATAL ERROR: ADMIN_PASSWORD belum diset di environment variables!');
+  process.exit(1);
+}
+
 const dbConfig = {
   host: process.env.MYSQLHOST || process.env.DB_HOST || 'localhost',
   user: process.env.MYSQLUSER || process.env.DB_USER || 'root',
@@ -11,7 +17,7 @@ const dbConfig = {
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0
-}; // <-- Kurung kurawal penutup dbConfig yang sebelumnya kurang sudah ditambahkan di sini
+};
 
 const pool = mysql.createPool(dbConfig);
 
@@ -27,7 +33,7 @@ async function initTables() {
     await tempConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\`;`);
     await tempConn.end();
 
-    // 2. Tabel Users (Menggunakan LONGTEXT untuk foto profil agar aman dari base64)
+    // 2. Tabel Users
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id VARCHAR(50) PRIMARY KEY,
@@ -43,24 +49,25 @@ async function initTables() {
       )
     `);
 
-    // 3. Tabel Items (Menyesuaikan ENUM status & tipe foto LONGTEXT)
+    // 3. Tabel Items
     await pool.query(`
-  CREATE TABLE IF NOT EXISTS items (
-    id VARCHAR(50) PRIMARY KEY,
-    id_pemilik VARCHAR(50) NOT NULL,
-    nama_barang VARCHAR(150) NOT NULL,
-    deskripsi TEXT,
-    harga INT NOT NULL DEFAULT 0,
-    kategori VARCHAR(50) NOT NULL,
-    kondisi VARCHAR(50) NOT NULL,
-    foto LONGTEXT,
-    status ENUM('jual', 'barter', 'keduanya', 'tersedia', 'terjual') DEFAULT 'keduanya',
-    lokasi VARCHAR(100) DEFAULT 'Sekaran, Gunungpati',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (id_pemilik) REFERENCES users(id) ON DELETE CASCADE
-  )
-`);
-    // 4. Tabel Offers (Penawaran Barter)
+      CREATE TABLE IF NOT EXISTS items (
+        id VARCHAR(50) PRIMARY KEY,
+        id_pemilik VARCHAR(50) NOT NULL,
+        nama_barang VARCHAR(150) NOT NULL,
+        deskripsi TEXT,
+        harga INT NOT NULL DEFAULT 0,
+        kategori VARCHAR(50) NOT NULL,
+        kondisi VARCHAR(50) NOT NULL,
+        foto LONGTEXT,
+        status ENUM('jual', 'barter', 'keduanya', 'tersedia', 'terjual') DEFAULT 'keduanya',
+        lokasi VARCHAR(100) DEFAULT 'Sekaran, Gunungpati',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (id_pemilik) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    // 4. Tabel Offers 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS offers (
         id VARCHAR(50) PRIMARY KEY,
@@ -78,7 +85,7 @@ async function initTables() {
       )
     `);
 
-    // 5. Tabel Conversations (Kamar Obrolan)
+    // 5. Tabel Conversations 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS conversations (
         id VARCHAR(50) PRIMARY KEY,
@@ -92,7 +99,7 @@ async function initTables() {
       )
     `);
 
-    // 6. Tabel Messages (Pesan Obrolan & Penawaran)
+    // 6. Tabel Messages 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS messages (
         id VARCHAR(50) PRIMARY KEY,
@@ -122,7 +129,7 @@ async function initTables() {
       )
     `);
 
-    // 8. Tabel Cart (Keranjang Belanja - Ditambahkan untuk sinkronisasi CartPage)
+    // 8. Tabel Cart 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS cart (
         id VARCHAR(50) PRIMARY KEY,
@@ -135,24 +142,24 @@ async function initTables() {
       )
     `);
 
-    // 2. Tambahkan baris ini untuk otomatis memperbaiki tabel di Railway yang terlanjur salah struktur
+    // Memperbaiki tabel yang terlanjur salah struktur (menggunakan try/catch agar tidak error jika sudah benar)
     try { await pool.query("ALTER TABLE items MODIFY COLUMN status ENUM('jual', 'barter', 'keduanya', 'tersedia', 'terjual') DEFAULT 'keduanya'"); } catch (e) { }
     try { await pool.query("ALTER TABLE messages MODIFY COLUMN type ENUM('text', 'offer', 'system') DEFAULT 'text'"); } catch (e) { }
     try { await pool.query("ALTER TABLE users ADD COLUMN phone VARCHAR(50) DEFAULT ''"); } catch (e) { }
 
-    // 3. Hash password admin sebelum di-insert
-    const hashedAdminPassword = await bcrypt.hash(process.env.ADMIN_PASSWORD || 'admin123', 10);
+    // Hash password admin HANYA menggunakan nilai dari environment, tanpa fallback 'admin123'
+    const hashedAdminPassword = await bcrypt.hash(process.env.ADMIN_PASSWORD, 10);
 
     await pool.query(`
       INSERT IGNORE INTO users (id, nama, email, password, foto_profil, lokasi, rating, role)
       VALUES ('USR-000', 'Admin RE:V', 'admin@techno.ac.id', ?, '/assets/seed-images/avatar-placeholder.svg', 'Kampus UNNES Gunungpati', 5.0, 'admin')
     `, [hashedAdminPassword]);
 
-    console.log('  Seluruh Tabel MySQL RE:V & Akun Admin berhasil diperiksa dan diinisialisasi!');
+    console.log('✅ Seluruh Tabel MySQL RE:V & Akun Admin berhasil diperiksa dan diinisialisasi!');
   } catch (error) {
-    console.error('  Gagal menginisialisasi database/tabel MySQL:', error.message);
+    console.error('❌ Gagal menginisialisasi database/tabel MySQL:', error.message);
   }
 }
 
-// 4. Ubah export-nya menjadi object agar initTables bisa dipanggil dan ditunggu (await) di index.js
+// Format export yang lebih bersih
 module.exports = { pool, initTables };

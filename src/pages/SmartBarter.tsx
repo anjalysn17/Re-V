@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { itemService, barterService } from '../services/db';
 import { APP_NAME } from '../constants/brand';
+import { createOfferAndConversation } from '../utils/barterActions';
 
 interface SmartBarterProps {
   onNavigate: (page: string, param?: string | any, conversationId?: string) => void;
@@ -27,7 +28,7 @@ interface MatchResultItem {
 
 export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }: SmartBarterProps) {
   const { currentUser, openAuthModal } = useAuth();
-  
+
   // State pencarian & filter
   const [searchTarget, setSearchTarget] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Semua');
@@ -51,14 +52,14 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
     const fetchMyBarterItems = async () => {
       setIsLoadingMyItems(true);
       try {
-        const allItems = await itemService.getAllItems();
-        const mine = allItems.filter(
-          (item: any) =>
-            item.id_pemilik === currentUser.id &&
-            (item.status === 'barter' || item.status === 'keduanya')
-        );
-        setMyBarterItems(mine);
-        if (mine.length > 0 && !selectedMyItemId) {
+        // AMBIL HANYA BARANG USER YANG BISA DIBARTER
+        const mine = await itemService.getAllItems({
+          owner: currentUser.id,
+          status: 'barter,keduanya'
+        });
+
+        setMyBarterItems(mine || []);
+        if (mine && mine.length > 0 && !selectedMyItemId) {
           setSelectedMyItemId(mine[0].id);
         }
       } catch (error) {
@@ -119,24 +120,16 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
     }
     setIsSearching(true);
     try {
-      const allItems = await itemService.getAllItems();
-      const otherItems = allItems.filter((item: any) => {
-        if (item.id_pemilik === currentUser.id) return false;
-        if (item.status !== 'barter' && item.status !== 'keduanya') return false;
-        if (selectedCategory !== 'Semua') {
-          if (item.kategori.toLowerCase().trim() !== selectedCategory.toLowerCase().trim()) {
-            return false;
-          }
-        }
-        if (searchTarget.trim()) {
-          const q = searchTarget.trim().toLowerCase();
-          const itemName = item.nama_barang || item.nama || '';
-          const itemDesc = item.deskripsi || '';
-          if (!itemName.toLowerCase().includes(q) && !itemDesc.toLowerCase().includes(q)) return false;
-        }
-        return true;
+      // 1. FILTERING TARGET SEPENUHNYA DILAKUKAN DI SERVER SEKARANG
+      const otherItems = await itemService.getAllItems({
+        exclude_owner: currentUser.id,
+        status: 'barter,keduanya',
+        kategori: selectedCategory !== 'Semua' ? selectedCategory : undefined,
+        q: searchTarget.trim() || undefined,
+        limit: 50 // Batasi agar matching tidak crash atau berat
       });
 
+      // 2. KALKULASI KECOCOKAN LOKAL (TIDAK PERLU .filter LAGI)
       const results: MatchResultItem[] = otherItems.map((item: any) => {
         const owner = {
           id: item.id_pemilik,
@@ -145,14 +138,17 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
           rating: 4.8,
           lokasi: item.lokasi || 'Semarang',
         };
+
         const myPrice = selectedMyItem.harga;
         const theirPrice = item.harga;
         const priceDiff = Math.abs(myPrice - theirPrice);
         const maxPrice = Math.max(myPrice, theirPrice, 1);
         const ratio = priceDiff / maxPrice;
         let match = Math.round(98 - ratio * 45);
+
         if (match < 50) match = 50;
         if (match > 98) match = 98;
+
         return {
           item,
           owner,
@@ -166,7 +162,6 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
       } else if (sortBy === 'Rating') {
         results.sort((a, b) => b.owner.rating - a.owner.rating);
       }
-
       setMatchResults(results);
       setSearched(true);
     } catch (error) {
@@ -193,19 +188,18 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
   const handleSendOffer = async (targetItem: any) => {
     if (!selectedMyItem || !currentUser) return;
     try {
-      const offerData = {
-        item_ditawarkan: selectedMyItem.id,
-        item_diminta: targetItem.id,
-        id_pengirim: currentUser.id,
-        id_penerima: targetItem.id_pemilik,
-        selisih_harga: selectedMyItem.harga - targetItem.harga,
-      };
-      const result = await barterService.createOffer(offerData);
+      const result = await createOfferAndConversation({
+        myItem: selectedMyItem,
+        targetItem: targetItem,
+        currentUser: currentUser
+      });
+
       if (result.success) {
         setSentOfferIds(prev => new Set(prev).add(targetItem.id));
-        setToastMsg('  Tawaran tukar berhasil dikirim!');
+        setToastMsg('🎉 Tawaran tukar berhasil dikirim!');
         setTimeout(() => setToastMsg(''), 3000);
-        onNavigate('chat', { targetUserId: targetItem.id_pemilik, targetItemId: targetItem.id });
+        // Pastikan mengirim ID lawan!
+        onNavigate('chat', { conversationId: result.convId, targetUserId: targetItem.id_pemilik, targetItemId: targetItem.id });
       } else {
         setToastMsg(result.message || 'Gagal mengirim tawaran.');
         setTimeout(() => setToastMsg(''), 3000);
@@ -216,7 +210,7 @@ export default function SmartBarter({ onNavigate, onOpenAddItem, onCartUpdated }
       setTimeout(() => setToastMsg(''), 3000);
     }
   };
-
+  
   const handleOpenChat = (targetItem: any) => {
     if (!currentUser) return;
     onNavigate('chat', { targetUserId: targetItem.id_pemilik, targetItemId: targetItem.id });

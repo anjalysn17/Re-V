@@ -23,9 +23,9 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
       }
       setIsLoading(true);
       try {
-        const allItems = await itemService.getAllItems();
-        const myItems = allItems.filter((item: Item) => item.id_pemilik === currentUser.id);
-        setItems(myItems);
+        // SEKARANG CUKUP PANGGIL BARANG MILIK USER SAJA
+        const myItems = await itemService.getAllItems({ owner: currentUser.id, limit: 50 });
+        setItems(myItems || []);
       } catch (error) {
         console.error("Gagal memuat barang saya:", error);
       } finally {

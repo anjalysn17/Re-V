@@ -46,9 +46,34 @@ export const authService = {
 // 2. BARANG & MARKETPLACE (Tabel: items)
 // ==========================================
 export const itemService = {
-  getAllItems: async () => {
+  // SUDAH DIPERBARUI: Menerima parameter untuk Server-Side Filtering & Pagination
+  getAllItems: async (params?: {
+    kategori?: string;
+    q?: string;
+    owner?: string;
+    exclude_owner?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+  }) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/items`);
+      let url = `${API_BASE_URL}/api/items`;
+
+      if (params) {
+        const query = new URLSearchParams();
+        if (params.kategori) query.append('kategori', params.kategori);
+        if (params.q) query.append('q', params.q);
+        if (params.owner) query.append('owner', params.owner);
+        if (params.exclude_owner) query.append('exclude_owner', params.exclude_owner);
+        if (params.status) query.append('status', params.status);
+        if (params.page) query.append('page', String(params.page));
+        if (params.limit) query.append('limit', String(params.limit));
+        
+        const queryString = query.toString();
+        if (queryString) url += `?${queryString}`;
+      }
+
+      const res = await fetch(url);
       const data = await res.json();
       return data.success ? data.data : [];
     } catch (error) {
