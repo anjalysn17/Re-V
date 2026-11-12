@@ -60,7 +60,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
         <button
           onClick={() => onNavigate('home')}
           title="Beranda"
-          className="text-white hover:opacity-85 transition-all p-2 rounded-xl shrink-0 flex items-center justify-center"
+          className="hidden md:flex text-white hover:opacity-85 transition-all p-2 rounded-xl shrink-0 flex items-center justify-center"
           style={{
             background: activePage === 'home' ? 'rgba(255, 255, 255, 0.18)' : 'rgba(255, 255, 255, 0.08)',
           }}
@@ -123,7 +123,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
               onOpenAddItem();
             }
           }}
-          className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold text-white transition-all hover:opacity-90 shrink-0 shadow-sm"
+          className="hidden md:flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold text-white transition-all hover:opacity-90 shrink-0 shadow-sm"
           style={{
             background: 'var(--color-accent)',
             fontFamily: 'var(--font-body)',
@@ -136,7 +136,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
         </button>
 
         {/* Right Icons: Keranjang, Notifikasi, Profil */}
-        <div className="flex items-center gap-3.5 shrink-0 pl-1">
+        <div className="hidden md:flex items-center gap-3.5 shrink-0 pl-1">
           {/* Cart */}
           <button
             onClick={() => onNavigate('cart')}
