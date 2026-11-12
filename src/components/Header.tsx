@@ -198,9 +198,8 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                   {notifications.map((n) => (
                     <div
                       key={n.id}
-                      className={`p-3 flex items-start gap-2.5 hover:bg-black/5 cursor-pointer transition-colors ${
-                        !n.sudah_dibaca ? 'bg-[#567257]/5' : ''
-                      }`}
+                      className={`p-3 flex items-start gap-2.5 hover:bg-black/5 cursor-pointer transition-colors ${!n.sudah_dibaca ? 'bg-[#567257]/5' : ''
+                        }`}
                     >
                       <div
                         className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
@@ -284,7 +283,10 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                   <div className="py-1 text-xs text-gray-700 divide-y divide-gray-100">
                     <div>
                       <button
-                        onClick={() => setProfileOpen(false)}
+                        onClick={() => {
+                          setProfileOpen(false);
+                          if (onNavigate) onNavigate('profile');
+                        }}
                         className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
                       >
                         <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -293,7 +295,10 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                         <span>Profil Saya</span>
                       </button>
                       <button
-                        onClick={() => setProfileOpen(false)}
+                        onClick={() => {
+                          setProfileOpen(false);
+                          if (onNavigate) onNavigate('orders');
+                        }}
                         className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
                       >
                         <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -304,7 +309,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                       <button
                         onClick={() => {
                           setProfileOpen(false);
-                          onNavigate('my-items');
+                          if (onNavigate) onNavigate('my-items');
                         }}
                         className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
                       >
@@ -314,7 +319,10 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                         <span>Barang Saya</span>
                       </button>
                       <button
-                        onClick={() => setProfileOpen(false)}
+                        onClick={() => {
+                          setProfileOpen(false);
+                          if (onNavigate) onNavigate('barter');
+                        }}
                         className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
                       >
                         <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -328,6 +336,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                         onClick={() => {
                           setProfileOpen(false);
                           logout();
+                          if (onNavigate) onNavigate('home');
                         }}
                         className="w-full px-4 py-2 text-left text-red-600 hover:bg-red-50 flex items-center gap-2 font-semibold transition-colors"
                       >
