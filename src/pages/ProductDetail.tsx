@@ -1,632 +1,608 @@
-import { useState } from 'react';
-import ReturnModal from '../components/ReturnModal';
+import { useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getDB, saveDB, generateId } from '../services/db';
-import { Item, User } from '../types/database';
-import { createOfferAndConversation, getOrCreateConversation } from '../utils/barterActions';
-import { APP_NAME } from '../constants/brand';
+import * as dbService from '../services/db';
+import { addOrderTransaction } from './OrdersPage';
 
 interface ProductDetailProps {
   productId?: string;
-  onNavigate: (page: string, params?: any) => void;
+  onNavigate: (page: string, params?: any, extraParam?: string) => void;
   onOpenAddItem?: () => void;
   onCartUpdated?: () => void;
 }
 
-export default function ProductDetail({ productId, onNavigate, onOpenAddItem, onCartUpdated }: ProductDetailProps) {
-  const { currentUser, openAuthModal } = useAuth();
-  const [barterOpen, setBarterOpen] = useState(false);
-  const [returnOpen, setReturnOpen] = useState(false);
-  const [selectedMyItemId, setSelectedMyItemId] = useState<string | null>(null);
-  const [qty, setQty] = useState(1);
-  const [toastMsg, setToastMsg] = useState('');
+const SAFE_COD_SPOTS = [
+  'Gerbang Utama UNNES (Sekaran)',
+  'Taman FMIPA UNNES',
+  'Masjid Ulul Albab UNNES',
+  'Indomaret Point Sekaran Raya',
+  'Pertigaan Patemon Gunungpati',
+];
 
-  // Ambil database terbaru
-  const db = getDB();
+export default function ProductDetail({
+  productId,
+  onNavigate,
+  onOpenAddItem,
+  onCartUpdated,
+}: ProductDetailProps) {
+  const { currentUser, openAuthModal } = useAuth() as any;
 
-  // Cari item berdasarkan productId
-  const item: Item | undefined = db.items.find(i => i.id === productId);
+  const [selectedCodSpot, setSelectedCodSpot] = useState<string>(SAFE_COD_SPOTS[0]);
+  const [isBarterModalOpen, setIsBarterModalOpen] = useState<boolean>(false);
+  const [selectedOfferItemId, setSelectedOfferItemId] = useState<string>('');
+  const [barterNote, setBarterNote] = useState<string>('');
+  const [toastMessage, setToastMessage] = useState<string>('');
 
-  // Cari data penjual / pemilik barang
-  const seller: User | undefined = item ? db.users.find(u => u.id === item.id_pemilik) : undefined;
+  const db = dbService.getDB() as any;
+  const allItems: any[] = db.items || [];
+  const allUsers: any[] = db.users || [];
+
+  // Ambil detail produk berdasarkan productId (fallback ke item pertama jika tidak ada)
+  const rawItem = useMemo(() => {
+    if (!allItems.length) return null;
+    if (productId) {
+      const found = allItems.find((it) => String(it.id) === String(productId));
+      if (found) return found;
+    }
+    return allItems[0];
+  }, [allItems, productId]);
 
   const showToast = (msg: string) => {
-    setToastMsg(msg);
-    setTimeout(() => setToastMsg(''), 3000);
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(''), 3500);
   };
 
-  // State: Jika barang tidak ditemukan di database
-  if (!item) {
+  const persistDB = (updatedDB: any) => {
+    if (typeof (dbService as any).saveDB === 'function') {
+      (dbService as any).saveDB(updatedDB);
+    }
+    localStorage.setItem('rev_db', JSON.stringify(updatedDB));
+  };
+
+  if (!rawItem) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-16 text-center">
-        <div
-          className="max-w-md mx-auto p-8 rounded-2xl border shadow-sm space-y-4"
-          style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
-        >
-          <div className="w-14 h-14 rounded-full bg-amber-50 text-amber-700 flex items-center justify-center mx-auto text-2xl font-bold">
-            !
-          </div>
-          <h2 className="text-lg font-bold text-gray-900" style={{ fontFamily: 'var(--font-display)' }}>
-            Barang Tidak Ditemukan
-          </h2>
-          <p className="text-xs text-gray-500 leading-relaxed">
-            Barang yang kamu cari mungkin telah dihapus, sudah selesai dibarter, atau tautan yang kamu buka tidak valid.
+      <div className="max-w-xl mx-auto px-4 py-16 text-center">
+        <div className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm">
+          <h2 className="text-lg font-bold text-gray-800 mb-2">Barang Tidak Ditemukan</h2>
+          <p className="text-xs text-gray-500 mb-6">
+            Barang yang kamu cari mungkin sudah terjual, selesai dibarter, atau dihapus oleh pemiliknya.
           </p>
           <button
             onClick={() => onNavigate('home')}
-            className="w-full py-2.5 rounded-xl text-white font-bold text-xs shadow-sm hover:opacity-90 transition-opacity cursor-pointer"
-            style={{ background: 'var(--color-primary)' }}
+            className="px-5 py-2.5 rounded-xl text-xs font-bold text-white"
+            style={{ background: 'var(--color-primary, #567257)' }}
           >
-            ← Kembali ke Beranda
+            Kembali ke Beranda
           </button>
         </div>
       </div>
     );
   }
 
-  // Fallback informasi penjual
-  const sellerName = seller?.nama || `Pengguna ${APP_NAME}`;
-  const sellerPhoto = seller?.foto_profil || '/assets/seed-images/avatar-placeholder.svg';
-  const sellerRating = seller?.rating ?? 4.8;
-  const sellerLocation = seller?.lokasi || item.lokasi;
-
-  // Hitung rentang estimasi nilai barter (±5%)
-  const minBarter = Math.round((item.harga * 0.95) / 1000) * 1000;
-  const maxBarter = Math.round((item.harga * 1.05) / 1000) * 1000;
-
-  // Daftar barang milik user login yang siap dibarter
-  const myBarterItems: Item[] = currentUser
-    ? db.items.filter(
-        i =>
-          i.id_pemilik === currentUser.id &&
-          (i.status === 'barter' || i.status === 'keduanya')
-      )
-    : [];
-
-  const isOwnItem = currentUser && currentUser.id === item.id_pemilik;
-
-  // Handler klik tombol "Ajukan Barter"
-  const handleOpenBarterModal = () => {
-    if (!currentUser) {
-      openAuthModal('login');
-      return;
-    }
-    if (isOwnItem) {
-      showToast('Ini adalah barang milikmu sendiri!');
-      return;
-    }
-    setBarterOpen(true);
+  // Normalisasi properti barang agar kompatibel dengan berbagai versi skema db.ts
+  const item = {
+    id: rawItem.id,
+    title: rawItem.title || rawItem.nama_barang || 'Barang Mahasiswa UNNES',
+    description:
+      rawItem.description ||
+      rawItem.deskripsi ||
+      'Barang masih sangat layak pakai, siap COD di area sekitar kampus UNNES Gunungpati.',
+    price: Number(rawItem.price ?? rawItem.harga ?? 0),
+    category: rawItem.category || rawItem.kategori || 'Perlengkapan Kos',
+    condition: rawItem.condition || rawItem.kondisi || 'Bekas - Sangat Baik',
+    location: rawItem.location || rawItem.lokasi || 'Sekaran, Gunungpati',
+    image: rawItem.image || rawItem.foto || '/assets/seed-images/placeholder.svg',
+    ownerId: rawItem.id_user ?? rawItem.sellerId ?? rawItem.ownerId ?? 'seller-default',
+    transactionMode: (
+      rawItem.transactionType ||
+      rawItem.tipe_transaksi ||
+      rawItem.mode ||
+      'both'
+    ).toLowerCase(),
+    wantedItem: rawItem.wantedItem || rawItem.barang_dicari || 'Perlengkapan kos / buku kuliah',
   };
 
-  // Handler konfirmasi kirim tawaran barter
-  const handleConfirmBarter = () => {
-    if (!currentUser || !selectedMyItemId) return;
+  const seller = allUsers.find((u) => String(u.id) === String(item.ownerId));
+  const sellerName =
+    seller?.nama || seller?.name || rawItem.sellerName || rawItem.ownerName || 'Mahasiswa UNNES';
+  const isSellerVerified =
+    seller?.is_verified || (seller?.email || '').toLowerCase().includes('unnes.ac.id');
 
-    const myItem = myBarterItems.find(i => i.id === selectedMyItemId);
-    if (!myItem) return;
+  const isOwnItem = currentUser && String(currentUser.id) === String(item.ownerId);
+  const canBuy =
+    item.transactionMode.includes('jual') ||
+    item.transactionMode.includes('sell') ||
+    item.transactionMode === 'both' ||
+    item.price > 0;
+  const canBarter =
+    item.transactionMode.includes('barter') ||
+    item.transactionMode === 'both' ||
+    Boolean(rawItem.canBarter);
 
-    const { convId } = createOfferAndConversation({
-      myItem,
-      targetItem: item,
-      currentUser,
+  // Daftar barang milik user yang sedang login untuk opsi barter
+  const myBarterItems = useMemo(() => {
+    if (!currentUser) return [];
+    return allItems.filter((it) => {
+      const uid = it.id_user ?? it.sellerId ?? it.ownerId;
+      return String(uid) === String(currentUser.id) && String(it.id) !== String(item.id);
+    });
+  }, [allItems, currentUser, item.id]);
+
+  // Helper membuat/membuka ruang chat agar terhubung dengan ChatPage
+  const createOrOpenChatRoom = (initialText?: string): string => {
+    const latestDB = dbService.getDB() as any;
+    const conversations: any[] = latestDB.conversations || [];
+    const messages: any[] = latestDB.messages || [];
+
+    const buyerId = String(currentUser.id);
+    const sellerId = String(item.ownerId);
+
+    let existingConv = conversations.find((c) => {
+      if (Array.isArray(c.participants)) {
+        const ids = c.participants.map(String);
+        return ids.includes(buyerId) && ids.includes(sellerId);
+      }
+      return (
+        (String(c.buyerId) === buyerId && String(c.sellerId) === sellerId) ||
+        (String(c.buyerId) === sellerId && String(c.sellerId) === buyerId)
+      );
     });
 
-    setBarterOpen(false);
-    onNavigate('chat', { conversationId: convId });
-  };
+    const convId = existingConv ? String(existingConv.id) : `conv-${Date.now()}`;
 
-  // Handler klik tombol "Chat"
-  const handleChat = () => {
-    if (!currentUser) {
-      openAuthModal('login');
-      return;
-    }
-    if (isOwnItem) {
-      showToast('Kamu tidak bisa memulai obrolan dengan diri sendiri.');
-      return;
+    if (!existingConv) {
+      existingConv = {
+        id: convId,
+        participants: [buyerId, sellerId],
+        buyerId,
+        sellerId,
+        buyerName: currentUser.nama || currentUser.name || 'Saya',
+        sellerName,
+        itemId: item.id,
+        itemTitle: item.title,
+        itemImage: item.image,
+        lastMessage: initialText || `Halo, saya tertarik dengan ${item.title}`,
+        updatedAt: new Date().toISOString(),
+      };
+      conversations.unshift(existingConv);
+    } else if (initialText) {
+      existingConv.lastMessage = initialText;
+      existingConv.updatedAt = new Date().toISOString();
     }
 
-    const { convId } = getOrCreateConversation({
-      targetItem: item,
-      currentUser,
+    if (initialText) {
+      messages.push({
+        id: `msg-${Date.now()}`,
+        conversationId: convId,
+        senderId: buyerId,
+        senderName: currentUser.nama || currentUser.name || 'Saya',
+        text: initialText,
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    persistDB({
+      ...latestDB,
+      conversations,
+      messages,
     });
 
-    onNavigate('chat', { conversationId: convId });
+    return convId;
   };
 
-  // Handler klik tombol "Ajak COD via Chat"
-  const handleAjakCOD = () => {
+  // 1. Aksi Tambah ke Keranjang
+  const handleAddToCart = () => {
     if (!currentUser) {
       openAuthModal('login');
       return;
     }
-    if (isOwnItem) {
-      showToast('Kamu tidak bisa mengajak COD pada barang milikmu sendiri.');
-      return;
-    }
 
-    const codMessage = `Halo kak ${sellerName}, saya tertarik dengan barang "${item.nama}". Apakah bisa ketemuan langsung untuk cek barang & COD di area ${item.lokasi}?`;
+    const latestDB = dbService.getDB() as any;
+    const cart: any[] = latestDB.cart || [];
 
-    const { convId } = getOrCreateConversation({
-      targetItem: item,
-      currentUser,
-      initialMessage: codMessage,
-    });
-
-    onNavigate('chat', { conversationId: convId });
-  };
-
-  // Handler klik tombol "Simpan ke Keranjang"
-  const handleSaveToCart = () => {
-    if (!currentUser) {
-      openAuthModal('login');
-      return;
-    }
-    const currentDB = getDB();
-    if (!Array.isArray(currentDB.cart)) currentDB.cart = [];
-
-    const alreadyInCart = currentDB.cart.some(
-      c => c.id_user === currentUser.id && c.id_item === item.id
+    const existingIdx = cart.findIndex(
+      (c) =>
+        String(c.id_user ?? c.userId) === String(currentUser.id) &&
+        String(c.id_item ?? c.itemId) === String(item.id)
     );
 
-    if (alreadyInCart) {
-      showToast('Barang ini sudah ada di keranjangmu');
+    if (existingIdx >= 0) {
+      cart[existingIdx].quantity = (cart[existingIdx].quantity || 1) + 1;
+    } else {
+      cart.push({
+        id: `cart-${Date.now()}`,
+        id_user: currentUser.id,
+        userId: currentUser.id,
+        id_item: item.id,
+        itemId: item.id,
+        title: item.title,
+        price: item.price,
+        image: item.image,
+        sellerId: item.ownerId,
+        sellerName,
+        type: 'beli',
+        quantity: 1,
+      });
+    }
+
+    persistDB({ ...latestDB, cart });
+    if (onCartUpdated) onCartUpdated();
+    showToast('Barang berhasil ditambahkan ke keranjang!');
+  };
+
+  // 2. Aksi Beli Langsung (Tercatat langsung ke OrdersPage)
+  const handleDirectBuy = () => {
+    if (!currentUser) {
+      openAuthModal('login');
       return;
     }
 
-    const newCartItem = {
-      id: generateId('CRT', currentDB.cart),
-      id_user: currentUser.id,
-      id_item: item.id,
-      ditambahkan_pada: new Date().toLocaleDateString('id-ID', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      }),
-    };
+    addOrderTransaction({
+      userId: currentUser.id,
+      sellerId: String(item.ownerId),
+      sellerName,
+      itemTitle: item.title,
+      itemImage: item.image,
+      type: 'beli',
+      price: item.price,
+      codLocation: selectedCodSpot,
+    });
 
-    currentDB.cart.unshift(newCartItem);
-    saveDB(currentDB);
-    showToast('✓ Berhasil disimpan ke keranjang!');
-    if (onCartUpdated) {
-      onCartUpdated();
+    createOrOpenChatRoom(
+      `Halo ${sellerName}, saya baru saja memesan "${item.title}" (Rp ${item.price.toLocaleString(
+        'id-ID'
+      )}). Bisa COD di ${selectedCodSpot}?`
+    );
+
+    showToast('Pesanan berhasil dibuat! Mengalihkan ke Riwayat Transaksi...');
+    setTimeout(() => onNavigate('orders'), 800);
+  };
+
+  // 3. Aksi Ajukan Barter (Tercatat ke OrdersPage + ChatPage)
+  const handleConfirmBarter = () => {
+    if (!currentUser) {
+      openAuthModal('login');
+      return;
     }
+
+    const offeredRaw = myBarterItems.find((it) => String(it.id) === String(selectedOfferItemId));
+    if (!offeredRaw) {
+      alert('Pilih salah satu barang milikmu terlebih dahulu untuk ditawarkan.');
+      return;
+    }
+
+    const offeredTitle = offeredRaw.title || offeredRaw.nama_barang || 'Barang Penawaran';
+
+    addOrderTransaction({
+      userId: currentUser.id,
+      sellerId: String(item.ownerId),
+      sellerName,
+      itemTitle: item.title,
+      itemImage: item.image,
+      type: 'barter',
+      barterOfferTitle: offeredTitle,
+      codLocation: selectedCodSpot,
+    });
+
+    const noteText = barterNote.trim() ? ` Catatan: "${barterNote.trim()}"` : '';
+    const convId = createOrOpenChatRoom(
+      `Halo ${sellerName}, saya mengajukan barter "${offeredTitle}" milik saya untuk ditukar dengan "${item.title}". Titik COD: ${selectedCodSpot}.${noteText}`
+    );
+
+    setIsBarterModalOpen(false);
+    setBarterNote('');
+    showToast('Pengajuan barter terkirim & tercatat di Transaksi!');
+    setTimeout(() => onNavigate('chat', convId), 700);
+  };
+
+  // 4. Aksi Chat Penjual
+  const handleChatSeller = () => {
+    if (!currentUser) {
+      openAuthModal('login');
+      return;
+    }
+    const convId = createOrOpenChatRoom(
+      `Halo ${sellerName}, apakah "${item.title}" masih tersedia?`
+    );
+    onNavigate('chat', convId);
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      {/* Toast Alert */}
-      {toastMsg && (
-        <div
-          className="fixed top-6 right-6 z-50 px-4 py-3 rounded-2xl text-xs font-bold text-white shadow-xl flex items-center gap-2 animate-in fade-in"
-          style={{ background: 'var(--color-primary)' }}
-        >
-          <span>{toastMsg}</span>
+    <div className="max-w-4xl mx-auto px-4 py-5 space-y-5">
+      {/* Notifikasi Toast */}
+      {toastMessage && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-semibold shadow-lg">
+          {toastMessage}
         </div>
       )}
 
-      {/* Breadcrumb Navigasi */}
-      <nav className="flex items-center gap-2 text-xs text-gray-500 mb-6">
-        <button className="hover:text-gray-800 cursor-pointer" onClick={() => onNavigate('home')}>
-          Beranda
-        </button>
-        <span>/</span>
-        <button
-          className="hover:text-gray-800 cursor-pointer"
-          onClick={() => onNavigate('category', { category: item.kategori })}
-        >
-          {item.kategori}
-        </button>
-        <span>/</span>
-        <span className="text-gray-900 font-medium truncate max-w-xs">{item.nama}</span>
-      </nav>
+      {/* Tombol Kembali */}
+      <button
+        onClick={() => onNavigate('home')}
+        className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 hover:text-gray-900 py-1"
+      >
+        <span>←</span> Kembali ke Katalog
+      </button>
 
-      {/* Card Utama */}
-      <div className="bg-white rounded-2xl p-6 md:p-8 border border-gray-200 shadow-sm">
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-8 lg:gap-10 items-start">
-          {/* SISI KIRI: Foto Asli Produk */}
-          <div className="md:col-span-5 flex flex-col gap-3">
-            <div className="aspect-square w-full rounded-2xl overflow-hidden bg-gray-50 border border-gray-100 flex items-center justify-center p-2 relative shadow-xs">
-              <img
-                src={item.foto}
-                alt={item.nama}
-                className="w-full h-full object-contain"
-                onError={e => {
-                  (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
-                }}
-              />
-              <div className="absolute top-3 left-3 flex flex-col gap-1.5">
-                <span
-                  className="px-2.5 py-0.5 rounded-full text-[10px] font-bold text-white shadow-xs"
-                  style={{ background: 'var(--color-primary)' }}
-                >
-                  {item.kondisi}
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-black/60 text-white backdrop-blur-xs">
-                  {item.status === 'keduanya'
-                    ? 'Jual & Barter'
-                    : item.status === 'barter'
-                    ? 'Barter'
-                    : 'Jual Beli'}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1.5 text-xs text-gray-500 pt-1">
-              <svg className="w-3.5 h-3.5 text-gray-400 shrink-0 fill-current" viewBox="0 0 20 20">
-                <path
-                  fillRule="evenodd"
-                  d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              <span>Lokasi: {item.lokasi}</span>
-            </div>
+      {/* Kontainer Utama Produk */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden grid grid-cols-1 md:grid-cols-2">
+        {/* Foto Barang */}
+        <div className="bg-gray-50 relative aspect-square md:aspect-auto md:min-h-[360px]">
+          <img
+            src={item.image}
+            alt={item.title}
+            className="w-full h-full object-cover"
+          />
+          <div className="absolute top-3 left-3 flex flex-wrap gap-1.5">
+            {canBuy && (
+              <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-white/95 text-emerald-800 shadow-sm">
+                Dijual
+              </span>
+            )}
+            {canBarter && (
+              <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500 text-white shadow-sm">
+                Bisa Dibarter
+              </span>
+            )}
           </div>
+        </div>
 
-          {/* SISI KANAN: Detail & Aksi */}
-          <div className="md:col-span-7 flex flex-col">
-            {/* Tag Kategori & Kondisi */}
-            <div className="flex items-center gap-2 mb-3">
-              <span className="px-2.5 py-1 bg-gray-100 text-gray-700 text-xs rounded-md font-medium">
-                {item.kondisi}
+        {/* Informasi & Aksi */}
+        <div className="p-5 sm:p-6 flex flex-col justify-between space-y-5">
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <span className="px-2.5 py-0.5 rounded-md bg-gray-100 font-medium text-gray-700">
+                {item.category}
               </span>
-              <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 text-xs rounded-md font-medium">
-                {item.status === 'keduanya'
-                  ? 'Tersedia Barter & Beli'
-                  : item.status === 'barter'
-                  ? 'Tersedia Barter'
-                  : 'Tersedia Beli'}
-              </span>
+              <span>•</span>
+              <span>{item.condition}</span>
             </div>
 
-            {/* Judul Produk */}
-            <h1 className="text-xl md:text-2xl font-bold text-gray-900 leading-snug">
-              {item.nama}
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900 leading-snug">
+              {item.title}
             </h1>
 
-            {/* Info Rating Penjual & Kategori */}
-            <div className="flex items-center gap-2 mt-2 text-xs text-gray-500">
-              <div className="flex items-center gap-1">
-                <svg className="w-3.5 h-3.5 text-amber-500 fill-current" viewBox="0 0 20 20">
-                  <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                </svg>
-                <span className="text-gray-900 font-semibold">{sellerRating}</span>
-              </div>
-              <span>•</span>
-              <span>Kategori: {item.kategori}</span>
-              <span>•</span>
-              <span>Penjual Mahasiswa UNNES</span>
-            </div>
+            {canBuy ? (
+              <p className="text-2xl font-extrabold" style={{ color: 'var(--color-primary, #567257)' }}>
+                Rp {item.price.toLocaleString('id-ID')}
+              </p>
+            ) : (
+              <p className="text-base font-bold text-amber-700">
+                Khusus Pertukaran / Barter Barang
+              </p>
+            )}
 
-            {/* Harga Beli */}
-            <div className="my-5 pb-4 border-b border-gray-100 flex items-baseline gap-3">
-              <span className="text-3xl font-bold text-gray-900 tracking-tight">
-                Rp {item.harga.toLocaleString('id-ID')}
-              </span>
-            </div>
+            <p className="text-xs text-gray-600 flex items-center gap-1.5">
+              <span>📍</span> Lokasi Barang: <strong>{item.location}</strong>
+            </p>
 
-            {/* Box Estimasi Barter */}
-            {(item.status === 'barter' || item.status === 'keduanya') && (
-              <div className="p-4 rounded-xl bg-gray-50 border border-gray-100 mb-5 space-y-1">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-500">Estimasi Nilai Barter</span>
-                  <span className="font-semibold text-gray-900">
-                    Rp {minBarter.toLocaleString('id-ID')} – Rp {maxBarter.toLocaleString('id-ID')}
-                  </span>
-                </div>
-                <p className="text-[11px] text-gray-500">
-                  Nilai estimasi untuk barang yang sepadan diajukan sebagai barter.
-                </p>
+            {canBarter && (
+              <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200/70 text-xs">
+                <span className="font-bold text-amber-900 block mb-0.5">
+                  Preferensi Barter Pemilik:
+                </span>
+                <span className="text-amber-800">{item.wantedItem}</span>
               </div>
             )}
 
-            {/* Jumlah Pembelian */}
-            <div className="flex items-center gap-4 mb-5">
-              <span className="text-xs text-gray-500 font-medium">Jumlah:</span>
-              <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden bg-white">
-                <button
-                  type="button"
-                  onClick={() => setQty(Math.max(1, qty - 1))}
-                  className="px-3 py-1 hover:bg-gray-100 text-gray-600 text-sm cursor-pointer"
-                >
-                  −
-                </button>
-                <span className="px-3 py-1 text-xs font-semibold min-w-[2rem] text-center text-gray-800">
-                  {qty}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setQty(qty + 1)}
-                  className="px-3 py-1 hover:bg-gray-100 text-gray-600 text-sm cursor-pointer"
-                >
-                  +
-                </button>
-              </div>
-              <span className="text-xs text-gray-400">Tersedia 1 unit</span>
+            <div className="pt-2 border-t border-gray-100">
+              <h3 className="text-xs font-bold text-gray-800 mb-1">Deskripsi Barang</h3>
+              <p className="text-xs text-gray-600 leading-relaxed whitespace-pre-line">
+                {item.description}
+              </p>
             </div>
+          </div>
 
-            {/* Profil Penjual */}
-            <div className="flex items-center justify-between p-3.5 rounded-xl border border-gray-100 bg-gray-50/50 mb-6">
-              <div className="flex items-center gap-3">
-                <img
-                  src={sellerPhoto}
-                  alt={sellerName}
-                  className="w-10 h-10 rounded-full object-cover border border-gray-200"
-                  onError={e => {
-                    (e.target as HTMLImageElement).src = '/assets/seed-images/avatar-placeholder.svg';
-                  }}
-                />
+          {/* Info Pemilik & Rekomendasi Titik COD */}
+          <div className="space-y-4 pt-3 border-t border-gray-100">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm"
+                  style={{ background: 'var(--color-primary, #567257)' }}
+                >
+                  {sellerName.charAt(0).toUpperCase()}
+                </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-gray-900">{sellerName}</span>
-                    <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-medium">
-                      Mahasiswa UNNES
-                    </span>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-xs font-bold text-gray-900">{sellerName}</p>
+                    {isSellerVerified && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-emerald-50 text-emerald-700">
+                        UNNES ✓
+                      </span>
+                    )}
                   </div>
-                  <p className="text-[11px] text-gray-400 mt-0.5">
-                    Rating {sellerRating} • {sellerLocation}
-                  </p>
+                  <p className="text-[11px] text-gray-500">Aktif di sekitar kampus</p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={handleChat}
-                className="text-xs font-semibold text-gray-700 bg-white border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer"
-              >
-                Chat Penjual
-              </button>
-            </div>
 
-            {/* Tombol Aksi */}
-            <div className="flex flex-wrap items-center gap-2.5 mb-4">
-              {(item.status === 'barter' || item.status === 'keduanya') && (
+              {!isOwnItem && (
                 <button
-                  type="button"
-                  onClick={handleOpenBarterModal}
-                  className="flex-1 min-w-[120px] py-3 text-white font-semibold text-xs md:text-sm rounded-xl transition-all shadow-xs hover:opacity-90 cursor-pointer"
-                  style={{ background: 'var(--color-primary)' }}
+                  onClick={handleChatSeller}
+                  className="px-3 py-2 rounded-xl text-xs font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50"
                 >
-                  Ajukan Barter
+                  Chat
                 </button>
               )}
-              <button
-                type="button"
-                className="flex-1 min-w-[120px] py-3 border border-gray-300 hover:border-gray-400 bg-white text-gray-800 font-semibold text-xs md:text-sm rounded-xl transition-all cursor-pointer"
-              >
-                Beli Sekarang
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveToCart}
-                className="px-3.5 py-3 border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium text-xs md:text-sm rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
-                title="Simpan ke Keranjang"
-              >
-                <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
-                  />
-                </svg>
-                <span>Simpan</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleChat}
-                className="px-4 py-3 border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium text-xs md:text-sm rounded-xl transition-all cursor-pointer"
-              >
-                Chat
-              </button>
             </div>
 
-            {/* Garansi Ringkas */}
-            <div className="flex items-center justify-between text-xs text-gray-500 bg-gray-50 rounded-lg px-4 py-2.5">
-              <span>Garansi Retur 2×24 jam jika kondisi tidak sesuai deskripsi.</span>
-              <button
-                type="button"
-                onClick={() => setReturnOpen(true)}
-                className="underline text-gray-700 hover:text-black font-medium cursor-pointer"
-              >
-                Pelajari
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Bagian Bawah: Deskripsi & Titik COD */}
-      <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Kolom Deskripsi Kondisi Fisik */}
-        <div className="md:col-span-2 bg-white rounded-2xl p-6 border border-gray-200 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b pb-3 border-gray-100">
-            <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wider">
-              Deskripsi & Kondisi Barang
-            </h2>
-            <span
-              className="px-2.5 py-0.5 rounded-full text-xs font-bold text-white"
-              style={{ background: 'var(--color-primary)' }}
-            >
-              {item.kondisi}
-            </span>
-          </div>
-
-          <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 text-xs text-gray-700 leading-relaxed space-y-3">
-            <p className="whitespace-pre-wrap">{item.deskripsi || 'Tidak ada deskripsi tambahan untuk barang ini.'}</p>
-          </div>
-        </div>
-
-        {/* Kolom Titik COD */}
-        <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm flex flex-col justify-between">
-          <div className="space-y-3">
-            <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wider">
-              Titik Ketemuan / COD
-            </h2>
-            <p className="text-xs text-gray-500 leading-relaxed">
-              Penjual bersedia melakukan transaksi ketemuan langsung (COD) di sekitar area:
-            </p>
-
-            <div className="flex items-start gap-2.5 p-3.5 rounded-xl border border-gray-100 bg-gray-50">
-              <svg className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5 fill-current" viewBox="0 0 20 20">
-                <path
-                  fillRule="evenodd"
-                  d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
-                  clipRule="evenodd"
-                />
-              </svg>
+            {/* Pilihan Titik Aman COD */}
+            {!isOwnItem && (
               <div>
-                <p className="text-xs font-bold text-gray-800">{item.lokasi}</p>
-                <p className="text-[11px] text-gray-400 mt-0.5">Lokasi disepakati bersama via obrolan</p>
+                <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                  Pilih Rekomendasi Titik Aman COD:
+                </label>
+                <select
+                  value={selectedCodSpot}
+                  onChange={(e) => setSelectedCodSpot(e.target.value)}
+                  className="w-full px-3 py-2.5 text-xs rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:outline-none focus:border-emerald-600"
+                >
+                  {SAFE_COD_SPOTS.map((spot) => (
+                    <option key={spot} value={spot}>
+                      {spot}
+                    </option>
+                  ))}
+                </select>
               </div>
-            </div>
-          </div>
+            )}
 
-          <button
-            type="button"
-            onClick={handleAjakCOD}
-            className="w-full mt-6 py-2.5 bg-gray-900 hover:bg-black text-white font-medium text-xs rounded-xl transition-all cursor-pointer shadow-xs"
-          >
-            Ajak COD via Chat
-          </button>
-        </div>
-      </div>
-
-      {/* Modal Ajukan Barter */}
-      {barterOpen && (
-        <div
-          className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in"
-          onClick={e => e.target === e.currentTarget && setBarterOpen(false)}
-        >
-          <div className="w-full max-w-lg bg-white rounded-2xl overflow-hidden shadow-xl border border-gray-100">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-gray-900">Ajukan Penawaran Barter</h3>
-              <button
-                type="button"
-                onClick={() => setBarterOpen(false)}
-                className="text-gray-400 hover:text-gray-700 text-lg leading-none cursor-pointer"
-              >
-                &times;
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <span className="text-xs text-gray-500 block mb-2 font-medium">Barang yang diinginkan:</span>
-                <div className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 border border-gray-100">
-                  <img
-                    src={item.foto}
-                    alt={item.nama}
-                    className="w-10 h-10 rounded-lg object-contain bg-white p-1"
-                    onError={e => {
-                      (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
-                    }}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-gray-900 truncate">{item.nama}</p>
-                    <p className="text-xs text-emerald-800 font-semibold">
-                      Rp {item.harga.toLocaleString('id-ID')}
-                    </p>
-                  </div>
-                </div>
+            {/* Tombol Aksi Transaksi */}
+            {isOwnItem ? (
+              <div className="p-3 rounded-xl bg-gray-50 border border-gray-200 text-center">
+                <p className="text-xs text-gray-600 font-medium">
+                  Ini adalah barang yang kamu unggah sendiri.
+                </p>
               </div>
-
-              <div>
-                <span className="text-xs text-gray-500 block mb-2 font-medium">
-                  Pilih barang milikmu untuk ditukarkan:
-                </span>
-
-                {myBarterItems.length === 0 ? (
-                  <div className="p-5 text-center space-y-2 rounded-xl border border-dashed bg-gray-50 border-gray-200">
-                    <p className="text-xs font-bold text-gray-700">Kamu Belum Punya Barang Barter</p>
-                    <p className="text-[11px] text-gray-500 leading-relaxed">
-                      Kamu belum mengunggah barang dengan status Barter. Upload barang ke etalasemu sekarang.
-                    </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {canBuy && (
+                  <>
                     <button
-                      type="button"
-                      onClick={() => {
-                        setBarterOpen(false);
-                        if (onOpenAddItem) onOpenAddItem();
-                      }}
-                      className="mt-1 px-4 py-2 rounded-xl text-xs font-bold text-white transition-opacity hover:opacity-90 cursor-pointer shadow-xs"
-                      style={{ background: 'var(--color-primary)' }}
+                      onClick={handleAddToCart}
+                      className="py-3 px-4 rounded-xl text-xs font-bold border border-gray-300 text-gray-800 hover:bg-gray-50 active:scale-[0.99] transition-all"
                     >
-                      + Tambah Barang Baru
+                      + Keranjang
                     </button>
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                    {myBarterItems.map(myItem => {
-                      const isSelected = selectedMyItemId === myItem.id;
-                      const priceDiff = Math.abs(myItem.harga - item.harga);
+                    <button
+                      onClick={handleDirectBuy}
+                      className="py-3 px-4 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-95 active:scale-[0.99] transition-all"
+                      style={{ background: 'var(--color-primary, #567257)' }}
+                    >
+                      Beli Langsung (COD)
+                    </button>
+                  </>
+                )}
+
+                {canBarter && (
+                  <button
+                    onClick={() => {
+                      if (!currentUser) {
+                        openAuthModal('login');
+                        return;
+                      }
+                      setSelectedOfferItemId(myBarterItems[0]?.id ? String(myBarterItems[0].id) : '');
+                      setIsBarterModalOpen(true);
+                    }}
+                    className={`py-3 px-4 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-95 active:scale-[0.99] transition-all ${
+                      canBuy ? 'sm:col-span-2' : 'col-span-full'
+                    }`}
+                    style={{ background: 'var(--color-accent, #D97706)' }}
+                  >
+                    Ajukan Barter Barang
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Modal Pengajuan Barter */}
+      {isBarterModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+              <h3 className="text-base font-bold text-gray-900">Ajukan Pertukaran Barang</h3>
+              <button
+                onClick={() => setIsBarterModalOpen(false)}
+                className="text-gray-400 hover:text-gray-700 text-lg font-bold px-2"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="text-xs text-gray-600 bg-gray-50 p-3 rounded-xl">
+              Kamu akan menukar barangmu dengan <strong>{item.title}</strong> milik{' '}
+              <strong>{sellerName}</strong> di <strong>{selectedCodSpot}</strong>.
+            </div>
+
+            {myBarterItems.length === 0 ? (
+              <div className="text-center py-6 space-y-3">
+                <p className="text-xs text-gray-500">
+                  Kamu belum memiliki barang di inventaris untuk ditawarkan barter.
+                </p>
+                {onOpenAddItem && (
+                  <button
+                    onClick={() => {
+                      setIsBarterModalOpen(false);
+                      onOpenAddItem();
+                    }}
+                    className="px-4 py-2.5 rounded-xl text-xs font-bold text-white"
+                    style={{ background: 'var(--color-primary, #567257)' }}
+                  >
+                    + Unggah Barangmu Dulu
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-2">
+                    Pilih Barang Milikmu yang Ditawarkan:
+                  </label>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {myBarterItems.map((myIt) => {
+                      const isSelected = String(selectedOfferItemId) === String(myIt.id);
                       return (
-                        <button
-                          key={myItem.id}
-                          type="button"
-                          onClick={() => setSelectedMyItemId(isSelected ? null : myItem.id)}
-                          className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        <label
+                          key={myIt.id}
+                          onClick={() => setSelectedOfferItemId(String(myIt.id))}
+                          className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
                             isSelected
-                              ? 'border-gray-900 bg-gray-50'
-                              : 'border-gray-200 bg-white hover:border-gray-300'
+                              ? 'border-amber-500 bg-amber-50/50'
+                              : 'border-gray-200 hover:bg-gray-50'
                           }`}
                         >
-                          <img
-                            src={myItem.foto}
-                            alt={myItem.nama}
-                            className="w-10 h-10 rounded-lg object-cover bg-gray-100"
-                            onError={e => {
-                              (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
-                            }}
+                          <input
+                            type="radio"
+                            name="offerItem"
+                            checked={isSelected}
+                            onChange={() => setSelectedOfferItemId(String(myIt.id))}
+                            className="accent-amber-600"
                           />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-semibold text-gray-900 truncate">{myItem.nama}</p>
-                            <div className="flex items-center gap-2 mt-0.5 text-[11px]">
-                              <span className="font-bold text-gray-800">
-                                Rp {myItem.harga.toLocaleString('id-ID')}
-                              </span>
-                              <span className="text-gray-400">·</span>
-                              <span className="text-gray-500">
-                                Selisih: Rp {priceDiff.toLocaleString('id-ID')}
-                              </span>
-                            </div>
+                          <img
+                            src={myIt.image || myIt.foto || '/assets/seed-images/placeholder.svg'}
+                            alt={myIt.title || myIt.nama_barang}
+                            className="w-10 h-10 rounded-lg object-cover bg-gray-100"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-bold text-gray-900 truncate">
+                              {myIt.title || myIt.nama_barang}
+                            </p>
+                            <p className="text-[11px] text-gray-500">
+                              Estimasi Rp {Number(myIt.price ?? myIt.harga ?? 0).toLocaleString('id-ID')}
+                            </p>
                           </div>
-                          <div
-                            className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
-                              isSelected ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
-                            }`}
-                          >
-                            {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white"></div>}
-                          </div>
-                        </button>
+                        </label>
                       );
                     })}
                   </div>
-                )}
-              </div>
+                </div>
 
-              <div className="flex gap-3 pt-2">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    Pesan Tambahan (Opsional)
+                  </label>
+                  <input
+                    type="text"
+                    value={barterNote}
+                    onChange={(e) => setBarterNote(e.target.value)}
+                    placeholder="Contoh: Kondisi mulus 95%, siap COD sore ini..."
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 focus:outline-none focus:border-amber-600"
+                  />
+                </div>
+
                 <button
-                  type="button"
-                  onClick={() => setBarterOpen(false)}
-                  className="flex-1 py-2.5 border border-gray-200 font-medium text-xs text-gray-600 rounded-xl hover:bg-gray-50 cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="button"
-                  disabled={!selectedMyItemId}
                   onClick={handleConfirmBarter}
-                  className="flex-1 py-2.5 font-medium text-xs text-white rounded-xl transition-all disabled:opacity-40 cursor-pointer shadow-xs"
-                  style={{ background: 'var(--color-primary)' }}
+                  className="w-full py-3 rounded-xl text-xs font-bold text-white shadow-sm"
+                  style={{ background: 'var(--color-accent, #D97706)' }}
                 >
-                  Kirim Tawaran Barter
+                  Kirim Penawaran Barter
                 </button>
-              </div>
-            </div>
+              </>
+            )}
           </div>
         </div>
       )}
-
-      {returnOpen && <ReturnModal onClose={() => setReturnOpen(false)} />}
     </div>
   );
 }

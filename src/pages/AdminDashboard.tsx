@@ -1,75 +1,219 @@
+import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import * as dbService from '../services/db';
+import { getOrders } from './OrdersPage';
 
 interface AdminDashboardProps {
-  onNavigate: (page: string) => void;
+  onNavigate?: (page: string, params?: any) => void;
 }
 
 export default function AdminDashboard({ onNavigate }: AdminDashboardProps) {
-  const { currentUser, logout } = useAuth();
+  const { currentUser, openAuthModal } = useAuth() as any;
+  const [activeTab, setActiveTab] = useState<'items' | 'users' | 'orders'>('items');
+  const [, setRefresh] = useState(0);
 
-  return (
-    <div className="max-w-screen-xl mx-auto px-4 py-12">
-      <div
-        className="max-w-2xl mx-auto rounded-2xl border p-8 md:p-12 shadow-sm text-center space-y-6"
-        style={{
-          background: 'var(--color-card)',
-          borderColor: 'var(--color-border)',
-          fontFamily: 'var(--font-body)',
-        }}
-      >
-        {/* Badge Role Admin */}
-        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#567257]/15 text-[#567257]">
-          <span className="w-2 h-2 rounded-full bg-[#567257]" />
-          <span>Panel Administrator</span>
-        </div>
+  const go = (page: string, params?: any) => {
+    if (onNavigate) onNavigate(page, params);
+    else if ((window as any).revNavigate) (window as any).revNavigate(page, params);
+  };
 
-        {/* Judul Utama yang Diminta */}
-        <h1
-          className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight"
-          style={{ fontFamily: 'var(--font-display)' }}
-        >
-          Dashboard Admin (belum dibuat)
-        </h1>
-
-        <p className="text-sm text-gray-600 max-w-md mx-auto leading-relaxed">
-          Selamat datang, <span className="font-bold text-gray-800">{currentUser?.nama || 'Admin'}</span>. Halaman khusus administrasi ini sedang dipersiapkan dan siap dikembangkan lebih lanjut.
-        </p>
-
-        {/* Info Box Akun Admin */}
-        <div
-          className="p-4 rounded-xl border text-left flex items-center justify-between text-xs max-w-md mx-auto"
-          style={{ borderColor: 'var(--color-border)', background: '#f8f4ee' }}
-        >
-          <div>
-            <p className="font-bold text-gray-800">{currentUser?.nama} ({currentUser?.role})</p>
-            <p className="text-gray-500 mt-0.5">{currentUser?.email}</p>
+  // Proteksi Rute: Tolak jika belum login atau bukan role 'admin'
+  if (!currentUser || currentUser.role !== 'admin') {
+    return (
+      <div className="max-w-md mx-auto px-4 py-16 text-center">
+        <div className="bg-white rounded-2xl p-8 shadow-sm border border-red-100">
+          <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-red-50 text-red-600 flex items-center justify-center font-bold text-xl">
+            !
           </div>
-          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
-            Akses Penuh
-          </span>
-        </div>
-
-        {/* Tombol Aksi */}
-        <div className="flex items-center justify-center gap-3 pt-4">
-          <button
-            onClick={() => onNavigate('home')}
-            className="px-5 py-2.5 rounded-xl border font-bold text-xs text-gray-700 hover:bg-black/5 transition-colors"
-            style={{ borderColor: 'var(--color-border)' }}
-          >
-            Lihat Beranda Publik
-          </button>
-          <button
-            onClick={() => {
-              logout();
-              onNavigate('home');
-            }}
-            className="px-5 py-2.5 rounded-xl text-white font-bold text-xs shadow-sm hover:opacity-90 transition-opacity"
-            style={{ background: 'var(--color-accent)' }}
-          >
-            Keluar / Logout
-          </button>
+          <h2 className="text-lg font-bold text-gray-900 mb-2">Akses Terbatas (Khusus Admin)</h2>
+          <p className="text-xs text-gray-500 mb-6">
+            Halaman ini hanya dapat diakses oleh administrator Re:V untuk moderasi listing dan pengguna.
+          </p>
+          <div className="flex flex-col gap-2">
+            {!currentUser && (
+              <button
+                onClick={() => openAuthModal('login')}
+                className="w-full py-2.5 rounded-xl text-xs font-bold text-white"
+                style={{ background: 'var(--color-primary, #567257)' }}
+              >
+                Masuk sebagai Admin
+              </button>
+            )}
+            <button
+              onClick={() => go('home')}
+              className="w-full py-2.5 rounded-xl text-xs font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50"
+            >
+              Kembali ke Beranda
+            </button>
+          </div>
         </div>
       </div>
+    );
+  }
+
+  const db = dbService.getDB() as any;
+  const items: any[] = db.items || [];
+  const users: any[] = db.users || [];
+  const orders = getOrders();
+
+  const persistDB = (updatedDB: any) => {
+    if (typeof (dbService as any).saveDB === 'function') {
+      (dbService as any).saveDB(updatedDB);
+    } else {
+      localStorage.setItem('rev_db', JSON.stringify(updatedDB));
+    }
+    setRefresh((prev) => prev + 1);
+  };
+
+  const handleDeleteItem = (itemId: string) => {
+    if (!window.confirm('Hapus barang ini dari marketplace?')) return;
+    const updatedItems = items.filter((item) => item.id !== itemId);
+    persistDB({ ...db, items: updatedItems });
+  };
+
+  const handleToggleVerifyUser = (userId: string) => {
+    const updatedUsers = users.map((u) =>
+      u.id === userId ? { ...u, is_verified: !u.is_verified } : u
+    );
+    persistDB({ ...db, users: updatedUsers });
+  };
+
+  return (
+    <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Admin Dashboard Re:V</h1>
+          <p className="text-xs text-gray-500">Moderasi barang, verifikasi mahasiswa, dan pantauan transaksi</p>
+        </div>
+        <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 self-start">
+          Admin: {currentUser.nama || currentUser.name || currentUser.email}
+        </span>
+      </div>
+
+      {/* Ringkasan Statistik */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+          <p className="text-xs text-gray-500">Total Listing</p>
+          <p className="text-2xl font-bold text-gray-900 mt-1">{items.length}</p>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+          <p className="text-xs text-gray-500">Total Pengguna</p>
+          <p className="text-2xl font-bold text-gray-900 mt-1">{users.length}</p>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+          <p className="text-xs text-gray-500">Total Transaksi</p>
+          <p className="text-2xl font-bold text-gray-900 mt-1">{orders.length}</p>
+        </div>
+      </div>
+
+      {/* Navigasi Tab Moderasi */}
+      <div className="flex gap-2 border-b border-gray-200 pb-2">
+        {[
+          { id: 'items', label: `Barang (${items.length})` },
+          { id: 'users', label: `Pengguna (${users.length})` },
+          { id: 'orders', label: `Transaksi (${orders.length})` },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id as any)}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors ${
+              activeTab === tab.id
+                ? 'text-white'
+                : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+            }`}
+            style={activeTab === tab.id ? { background: 'var(--color-primary, #567257)' } : undefined}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Konten Tab Barang */}
+      {activeTab === 'items' && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm divide-y divide-gray-100">
+          {items.length === 0 ? (
+            <p className="p-6 text-center text-xs text-gray-500">Belum ada barang terdaftar.</p>
+          ) : (
+            items.map((item) => (
+              <div key={item.id} className="p-4 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <img
+                    src={item.image || item.foto || '/assets/seed-images/placeholder.svg'}
+                    alt={item.title || item.nama_barang}
+                    className="w-12 h-12 rounded-xl object-cover bg-gray-100 shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-gray-900 truncate">
+                      {item.title || item.nama_barang}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Kategori: {item.category || item.kategori || '-'} • Rp{' '}
+                      {Number(item.price || item.harga || 0).toLocaleString('id-ID')}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleDeleteItem(item.id)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-50 text-red-600 hover:bg-red-100 shrink-0"
+                >
+                  Hapus
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Konten Tab Pengguna */}
+      {activeTab === 'users' && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm divide-y divide-gray-100">
+          {users.length === 0 ? (
+            <p className="p-6 text-center text-xs text-gray-500">Belum ada data pengguna.</p>
+          ) : (
+            users.map((user) => (
+              <div key={user.id} className="p-4 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-bold text-gray-900">{user.nama || user.name}</p>
+                  <p className="text-xs text-gray-500">{user.email}</p>
+                </div>
+                <button
+                  onClick={() => handleToggleVerifyUser(user.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+                    user.is_verified
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {user.is_verified ? 'Terverifikasi ✓' : 'Verifikasi Akun'}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Konten Tab Transaksi */}
+      {activeTab === 'orders' && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm divide-y divide-gray-100">
+          {orders.length === 0 ? (
+            <p className="p-6 text-center text-xs text-gray-500">Belum ada transaksi berlangsung.</p>
+          ) : (
+            orders.map((order) => (
+              <div key={order.id} className="p-4 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-bold text-gray-900">{order.itemTitle}</p>
+                  <p className="text-xs text-gray-500">
+                    Tipe: {order.type.toUpperCase()} • Mitra: {order.sellerName}
+                  </p>
+                </div>
+                <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">
+                  {order.status}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }

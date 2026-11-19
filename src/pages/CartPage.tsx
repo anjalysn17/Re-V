@@ -1,434 +1,399 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getDB, saveDB } from '../services/db';
-import { Item } from '../types/database';
-import { createOfferAndConversation } from '../utils/barterActions';
-import Footer from '../components/Footer';
+import * as dbService from '../services/db';
+import { addOrderTransaction } from './OrdersPage';
 
 interface CartPageProps {
   onNavigate: (page: string, params?: any) => void;
   onCartUpdated?: () => void;
 }
 
-export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
-  const { currentUser, openAuthModal } = useAuth();
-  const [barterTargetItem, setBarterTargetItem] = useState<Item | null>(null);
-  const [selectedMyItemId, setSelectedMyItemId] = useState<string>('');
-  const [isSubmittingOffer, setIsSubmittingOffer] = useState(false);
+interface ResolvedCartItem {
+  cartId: string;
+  itemId: string;
+  title: string;
+  price: number;
+  quantity: number;
+  image: string;
+  category: string;
+  sellerId?: string;
+  sellerName: string;
+  type: 'beli' | 'barter';
+  barterOfferTitle?: string;
+}
 
-  // Jika belum login, tampilkan state Perlu Masuk Akun
+const SAFE_COD_SPOTS = [
+  'Gerbang Utama UNNES Sekaran',
+  'Lobi Dekanat FMIPA UNNES',
+  'Perpustakaan Pusat UNNES',
+  'Alfamart / Indomaret Sekaran Raya',
+  'Area Kos Patemon (Sesuai Kesepakatan Chat)',
+];
+
+// Helper untuk menyimpan perubahan keranjang ke db.ts / localStorage secara dinamis
+function persistCartChanges(updatedCartArray: any[]) {
+  const db = dbService.getDB() as any;
+  const updatedDB = { ...db, cart: updatedCartArray };
+
+  if (typeof (dbService as any).saveDB === 'function') {
+    (dbService as any).saveDB(updatedDB);
+    return;
+  }
+
+  // Fallback: cari key database di localStorage yang menyimpan array 'items' dan 'cart'
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key) continue;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(key) || '');
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.items)) {
+        localStorage.setItem(key, JSON.stringify({ ...parsed, cart: updatedCartArray }));
+        return;
+      }
+    } catch {
+      // Abaikan key non-JSON
+    }
+  }
+
+  localStorage.setItem('rev_db', JSON.stringify(updatedDB));
+}
+
+export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
+  const { currentUser, openAuthModal } = useAuth() as any;
+  const [cartItems, setCartItems] = useState<ResolvedCartItem[]>([]);
+  const [selectedCodSpot, setSelectedCodSpot] = useState<string>(SAFE_COD_SPOTS[0]);
+  const [buyerNote, setBuyerNote] = useState<string>('');
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+
+  const loadCart = () => {
+    if (!currentUser) {
+      setCartItems([]);
+      return;
+    }
+
+    const db = dbService.getDB() as any;
+    const rawCart: any[] = db.cart || [];
+    const allItems: any[] = db.items || [];
+    const allUsers: any[] = db.users || [];
+
+    const userEntries = rawCart.filter(
+      (c) => String(c.id_user ?? c.userId) === String(currentUser.id)
+    );
+
+    const resolved: ResolvedCartItem[] = userEntries.map((entry, idx) => {
+      const targetItemId = String(entry.id_item ?? entry.itemId ?? entry.productId ?? '');
+      const product = allItems.find((it) => String(it.id) === targetItemId) || entry;
+
+      const sellerId = product.id_user ?? product.sellerId ?? product.ownerId;
+      const sellerObj = allUsers.find((u) => String(u.id) === String(sellerId));
+
+      return {
+        cartId: String(entry.id ?? `${targetItemId}-${idx}`),
+        itemId: targetItemId,
+        title: product.title || product.nama_barang || 'Barang Bekas Mahasiswa',
+        price: Number(product.price ?? product.harga ?? 0),
+        quantity: Number(entry.quantity ?? entry.qty ?? 1),
+        image: product.image || product.foto || '/assets/seed-images/placeholder.svg',
+        category: product.category || product.kategori || 'Umum',
+        sellerId: sellerId ? String(sellerId) : undefined,
+        sellerName:
+          sellerObj?.nama ||
+          sellerObj?.name ||
+          product.sellerName ||
+          product.ownerName ||
+          'Mahasiswa UNNES',
+        type: entry.type === 'barter' ? 'barter' : 'beli',
+        barterOfferTitle: entry.barterOfferTitle,
+      };
+    });
+
+    setCartItems(resolved);
+  };
+
+  useEffect(() => {
+    loadCart();
+  }, [currentUser]);
+
+  const handleUpdateQty = (cartId: string, itemId: string, delta: number) => {
+    if (!currentUser) return;
+    const db = dbService.getDB() as any;
+    const rawCart: any[] = db.cart || [];
+
+    const updatedRawCart = rawCart
+      .map((entry, idx) => {
+        const entryCartId = String(entry.id ?? `${entry.id_item ?? entry.itemId}-${idx}`);
+        const isTarget =
+          String(entry.id_user ?? entry.userId) === String(currentUser.id) &&
+          (entryCartId === cartId || String(entry.id_item ?? entry.itemId) === itemId);
+
+        if (!isTarget) return entry;
+
+        const currentQty = Number(entry.quantity ?? entry.qty ?? 1);
+        const nextQty = currentQty + delta;
+        if (nextQty <= 0) return null;
+
+        return { ...entry, quantity: nextQty, qty: nextQty };
+      })
+      .filter(Boolean);
+
+    persistCartChanges(updatedRawCart);
+    loadCart();
+    if (onCartUpdated) onCartUpdated();
+  };
+
+  const handleRemoveItem = (cartId: string, itemId: string) => {
+    if (!currentUser) return;
+    const db = dbService.getDB() as any;
+    const rawCart: any[] = db.cart || [];
+
+    const remainingCart = rawCart.filter((entry, idx) => {
+      const isSameUser = String(entry.id_user ?? entry.userId) === String(currentUser.id);
+      if (!isSameUser) return true;
+
+      const entryCartId = String(entry.id ?? `${entry.id_item ?? entry.itemId}-${idx}`);
+      const entryItemId = String(entry.id_item ?? entry.itemId ?? entry.productId ?? '');
+      return entryCartId !== cartId && entryItemId !== itemId;
+    });
+
+    persistCartChanges(remainingCart);
+    loadCart();
+    if (onCartUpdated) onCartUpdated();
+  };
+
+  // Fungsi utama Checkout yang mencatat pesanan ke OrdersPage & mengosongkan keranjang
+  const handleCheckout = () => {
+    if (!currentUser) {
+      openAuthModal('login');
+      return;
+    }
+
+    if (cartItems.length === 0 || isProcessing) return;
+    setIsProcessing(true);
+
+    try {
+      const codInfo = buyerNote.trim()
+        ? `${selectedCodSpot} (Catatan: ${buyerNote.trim()})`
+        : selectedCodSpot;
+
+      // 1. Tambahkan setiap item keranjang ke riwayat transaksi (OrdersPage)
+      cartItems.forEach((item) => {
+        addOrderTransaction({
+          userId: String(currentUser.id),
+          sellerId: item.sellerId,
+          sellerName: item.sellerName,
+          itemTitle: item.quantity > 1 ? `${item.title} (${item.quantity}x)` : item.title,
+          itemImage: item.image,
+          type: item.type,
+          price: item.price * item.quantity,
+          barterOfferTitle: item.barterOfferTitle,
+          codLocation: codInfo,
+        });
+      });
+
+      // 2. Kosongkan item milik akun yang sedang login dari keranjang
+      const db = dbService.getDB() as any;
+      const otherUsersCart = (db.cart || []).filter(
+        (c: any) => String(c.id_user ?? c.userId) !== String(currentUser.id)
+      );
+      persistCartChanges(otherUsersCart);
+
+      // 3. Perbarui UI & pindah ke halaman OrdersPage
+      setCartItems([]);
+      if (onCartUpdated) onCartUpdated();
+      alert('Transaksi berhasil dibuat! Silakan koordinasikan jadwal COD dengan penjual.');
+      onNavigate('orders');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Tampilan jika pengguna belum login
   if (!currentUser) {
     return (
-      <div className="max-w-screen-xl mx-auto px-4 py-16 text-center">
-        <div
-          className="max-w-md mx-auto p-8 rounded-2xl border shadow-sm space-y-4"
-          style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
-        >
-          <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto text-xl font-bold">
-            !
-          </div>
-          <h2 className="text-lg font-bold text-gray-900">Perlu Masuk Akun</h2>
-          <p className="text-xs text-gray-500">
-            Silakan masuk untuk melihat daftar barang yang sudah kamu simpan ke keranjang.
+      <div className="max-w-md mx-auto px-4 py-16 text-center">
+        <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
+          <h2 className="text-lg font-bold text-gray-900 mb-2">Keranjang Belanja</h2>
+          <p className="text-xs text-gray-500 mb-6">
+            Masuk terlebih dahulu untuk melihat dan menyelesaikan transaksi barang di keranjangmu.
           </p>
           <button
             onClick={() => openAuthModal('login')}
-            className="w-full py-2.5 rounded-xl text-white font-bold text-xs shadow-sm hover:opacity-90 transition-opacity cursor-pointer"
-            style={{ background: 'var(--color-accent)' }}
+            className="w-full py-3 rounded-xl text-xs font-bold text-white"
+            style={{ background: 'var(--color-primary, #567257)' }}
           >
-            Masuk Sekarang
+            Masuk ke Akun
           </button>
         </div>
       </div>
     );
   }
 
-  const db = getDB();
-  const userCart = (db.cart || []).filter(c => c.id_user === currentUser.id);
-
-  // Map item keranjang dengan item aktual
-  const cartEntries = userCart.map(c => {
-    const item = db.items.find(i => i.id === c.id_item);
-    return {
-      cartId: c.id,
-      addedAt: c.ditambahkan_pada,
-      item: item || null,
-      itemId: c.id_item,
-    };
-  });
-
-  const handleRemoveFromCart = (cartId: string) => {
-    const currentDB = getDB();
-    currentDB.cart = (currentDB.cart || []).filter(c => c.id !== cartId);
-    saveDB(currentDB);
-    if (onCartUpdated) {
-      onCartUpdated();
-    }
-  };
-
-  // Barang milik user untuk modal barter
-  const myItems = db.items.filter(
-    i => i.id_pemilik === currentUser.id && (i.status === 'barter' || i.status === 'keduanya')
-  );
-
-  const handleSendBarterOffer = () => {
-    if (!barterTargetItem || !selectedMyItemId) return;
-    const myItem = myItems.find(i => i.id === selectedMyItemId);
-    if (!myItem) return;
-
-    setIsSubmittingOffer(true);
-    try {
-      const res = createOfferAndConversation({
-        myItem,
-        targetItem: barterTargetItem,
-        currentUser,
-      });
-      setBarterTargetItem(null);
-      setSelectedMyItemId('');
-      if (onCartUpdated) onCartUpdated();
-      onNavigate('chat', { conversationId: res.convId });
-    } finally {
-      setIsSubmittingOffer(false);
-    }
-  };
+  const totalPrice = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const totalCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
 
   return (
-    <div className="max-w-screen-xl mx-auto px-4 py-6 space-y-6">
-      {/* Breadcrumb */}
-      <nav className="flex items-center gap-2 text-xs text-gray-500">
-        <button
-          onClick={() => onNavigate('home')}
-          className="hover:text-gray-900 transition-colors flex items-center gap-1 font-medium cursor-pointer"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-          </svg>
-          <span>Beranda</span>
-        </button>
-        <span>/</span>
-        <span className="text-gray-900 font-bold">Keranjang (Simpan untuk Nanti)</span>
-      </nav>
-
-      {/* Header Halaman */}
-      <div className="border-b pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2" style={{ borderColor: 'var(--color-border)' }}>
-        <div>
-          <h1
-            className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight"
-            style={{ fontFamily: 'var(--font-display)' }}
-          >
-            Keranjang Barang
-          </h1>
-          <p className="text-xs text-gray-500 mt-1">
-            Daftar barang yang kamu simpan untuk ditinjau, diajukan barter, atau dibeli nanti ({cartEntries.length} barang)
-          </p>
-        </div>
-        {cartEntries.length > 0 && (
-          <button
-            onClick={() => onNavigate('home')}
-            className="text-xs font-semibold hover:underline text-left sm:text-right cursor-pointer"
-            style={{ color: 'var(--color-primary)' }}
-          >
-            + Cari Barang Lain
-          </button>
-        )}
+    <div className="max-w-5xl mx-auto px-4 py-6">
+      <div className="mb-5">
+        <h1 className="text-xl font-bold text-gray-900">Keranjang Saya</h1>
+        <p className="text-xs text-gray-500">
+          Periksa kembali daftar barang sebelum menyepakati titik COD di sekitar kampus
+        </p>
       </div>
 
-      {/* Konten Keranjang */}
-      {cartEntries.length === 0 ? (
-        <div
-          className="p-12 md:p-16 rounded-2xl border text-center space-y-4 my-6"
-          style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
-        >
-          <div className="w-16 h-16 rounded-full bg-[#567257]/10 text-[#567257] flex items-center justify-center mx-auto">
-            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+      {cartItems.length === 0 ? (
+        <div className="bg-white rounded-2xl p-10 text-center border border-gray-100 shadow-sm">
+          <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
+            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                d="M2.25 3h1.386c.51 0 .955.343 1.087.835l.383 1.437M7.5 14.25a3 3 0 00-3 3h15.75m-12.75-3h11.218c1.121-2.3 2.1-4.684 2.924-7.138a60.114 60.114 0 00-16.536-1.84M7.5 14.25L5.106 5.272M6 20.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm12.75 0a.75.75 0 11-1.5 0 .75.75 0 011.5 0z"
+                strokeWidth={1.8}
+                d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
               />
             </svg>
           </div>
-          <div className="space-y-1.5 max-w-md mx-auto">
-            <h3 className="text-base font-bold text-gray-800">
-              Keranjang Kamu Masih Kosong
-            </h3>
-            <p className="text-xs text-gray-500">
-              Simpan barang incaranmu saat melihat katalog atau hasil Smart Barter agar kamu bisa dengan mudah meninjau atau mengajukan barter kapan saja.
-            </p>
+          <h3 className="text-base font-bold text-gray-800">Keranjang Masih Kosong</h3>
+          <p className="text-xs text-gray-500 max-w-sm mx-auto mt-1 mb-5">
+            Jelajahi perlengkapan kos, buku kuliah, atau elektronik bekas layak pakai di sekitar UNNES.
+          </p>
+          <button
+            onClick={() => onNavigate('home')}
+            className="px-5 py-2.5 rounded-xl text-xs font-bold text-white"
+            style={{ background: 'var(--color-primary, #567257)' }}
+          >
+            Mulai Cari Barang
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Kolom Kiri: Daftar Item di Keranjang */}
+          <div className="lg:col-span-2 space-y-3">
+            {cartItems.map((item) => (
+              <div
+                key={item.cartId}
+                className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex gap-3.5 items-center"
+              >
+                <img
+                  src={item.image}
+                  alt={item.title}
+                  onClick={() => onNavigate('product', item.itemId)}
+                  className="w-20 h-20 rounded-xl object-cover bg-gray-100 border border-gray-200 shrink-0 cursor-pointer"
+                />
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <h3
+                      onClick={() => onNavigate('product', item.itemId)}
+                      className="text-sm font-bold text-gray-900 truncate cursor-pointer hover:underline"
+                    >
+                      {item.title}
+                    </h3>
+                    <button
+                      onClick={() => handleRemoveItem(item.cartId, item.itemId)}
+                      title="Hapus dari keranjang"
+                      className="text-xs text-red-500 hover:text-red-700 font-medium shrink-0 px-1.5 py-0.5"
+                    >
+                      Hapus
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Penjual: {item.sellerName} • {item.category}
+                  </p>
+
+                  <div className="flex items-center justify-between mt-3">
+                    <p className="text-sm font-bold text-gray-900">
+                      {item.type === 'barter'
+                        ? 'Tukar Barang (Barter)'
+                        : `Rp ${(item.price * item.quantity).toLocaleString('id-ID')}`}
+                    </p>
+
+                    {/* Kontrol Jumlah Barang */}
+                    <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1">
+                      <button
+                        onClick={() => handleUpdateQty(item.cartId, item.itemId, -1)}
+                        className="w-6 h-6 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-200 rounded"
+                      >
+                        -
+                      </button>
+                      <span className="text-xs font-bold text-gray-800 w-5 text-center">
+                        {item.quantity}
+                      </span>
+                      <button
+                        onClick={() => handleUpdateQty(item.cartId, item.itemId, 1)}
+                        className="w-6 h-6 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-200 rounded"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
-          <div className="pt-2">
+
+          {/* Kolom Kanan: Pengaturan COD & Ringkasan Checkout */}
+          <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm h-fit space-y-4">
+            <h2 className="text-sm font-bold text-gray-900 border-b border-gray-100 pb-3">
+              Ringkasan & Titik COD
+            </h2>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                Rekomendasi Titik Temu Aman (COD)
+              </label>
+              <select
+                value={selectedCodSpot}
+                onChange={(e) => setSelectedCodSpot(e.target.value)}
+                className="w-full px-3 py-2.5 text-xs rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-emerald-600"
+              >
+                {SAFE_COD_SPOTS.map((spot) => (
+                  <option key={spot} value={spot}>
+                    {spot}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                Catatan Waktu / Lokasi (Opsional)
+              </label>
+              <input
+                type="text"
+                value={buyerNote}
+                onChange={(e) => setBuyerNote(e.target.value)}
+                placeholder="Misal: Ketemu jam 4 sore setelah kelas"
+                className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div className="pt-2 border-t border-gray-100 space-y-2 text-xs">
+              <div className="flex justify-between text-gray-500">
+                <span>Total Barang</span>
+                <span>{totalCount} item</span>
+              </div>
+              <div className="flex justify-between text-gray-500">
+                <span>Biaya Pengiriman (COD Kampus)</span>
+                <span className="text-emerald-600 font-semibold">Gratis (Rp 0)</span>
+              </div>
+              <div className="flex justify-between text-sm font-bold text-gray-900 pt-2 border-t border-gray-100">
+                <span>Total Pembayaran COD</span>
+                <span>Rp {totalPrice.toLocaleString('id-ID')}</span>
+              </div>
+            </div>
+
             <button
-              onClick={() => onNavigate('home')}
-              className="px-6 py-2.5 rounded-xl font-bold text-xs text-white shadow-sm transition-all hover:opacity-90 cursor-pointer"
-              style={{ background: 'var(--color-accent)' }}
+              onClick={handleCheckout}
+              disabled={isProcessing}
+              className="w-full py-3 rounded-xl text-xs font-bold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
+              style={{ background: 'var(--color-primary, #567257)' }}
             >
-              Mulai Eksplorasi Barang
+              {isProcessing ? 'Memproses...' : `Checkout Sekarang (${totalCount})`}
             </button>
           </div>
         </div>
-      ) : (
-        <div className="space-y-3">
-          {cartEntries.map(({ cartId, addedAt, item, itemId }) => {
-            if (!item) {
-              return (
-                <div
-                  key={cartId}
-                  className="p-4 rounded-2xl border flex items-center justify-between gap-4 bg-gray-50/80"
-                  style={{ borderColor: 'var(--color-border)' }}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-16 h-16 rounded-xl bg-gray-200 flex items-center justify-center text-gray-400 text-xs shrink-0">
-                      Tidak Ada
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-gray-700">Barang Tidak Tersedia Lagi</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">
-                        Barang ini mungkin sudah dihapus atau laku oleh pemiliknya.
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleRemoveFromCart(cartId)}
-                    className="px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-medium shrink-0 transition-colors cursor-pointer"
-                  >
-                    Hapus
-                  </button>
-                </div>
-              );
-            }
-
-            const canBarter = item.status === 'barter' || item.status === 'keduanya';
-
-            return (
-              <div
-                key={cartId}
-                className="p-4 md:p-5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all hover:shadow-xs"
-                style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
-              >
-                {/* Info Produk */}
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className="w-20 h-20 rounded-xl overflow-hidden bg-gray-100 shrink-0 border border-gray-100 relative">
-                    <img
-                      src={item.foto}
-                      alt={item.nama}
-                      className="w-full h-full object-cover"
-                      onError={e => {
-                        (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
-                      }}
-                    />
-                    <span
-                      className="absolute top-1 left-1 px-1.5 py-0.2 rounded text-[9px] font-bold text-white shadow-xs"
-                      style={{ background: 'var(--color-primary)' }}
-                    >
-                      {item.kondisi.split(' ')[0]}
-                    </span>
-                  </div>
-
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-black/5 text-gray-600">
-                        {item.kategori}
-                      </span>
-                      <span className="text-[10px] text-gray-400">
-                        Disimpan {addedAt}
-                      </span>
-                    </div>
-
-                    <h3
-                      onClick={() => onNavigate('product', { productId: item.id })}
-                      className="text-sm md:text-base font-bold text-gray-900 leading-snug truncate hover:underline cursor-pointer"
-                    >
-                      {item.nama}
-                    </h3>
-
-                    <p
-                      className="text-sm font-black"
-                      style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-display)' }}
-                    >
-                      Rp {item.harga.toLocaleString('id-ID')}
-                    </p>
-
-                    <p className="text-[11px] text-gray-400 flex items-center gap-1">
-                      <svg className="w-3 h-3 fill-current text-gray-400 shrink-0" viewBox="0 0 20 20">
-                        <path
-                          fillRule="evenodd"
-                          d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                      <span>{item.lokasi}</span>
-                    </p>
-                  </div>
-                </div>
-
-                {/* Tombol Aksi */}
-                <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                  {canBarter && (
-                    <button
-                      onClick={() => {
-                        setBarterTargetItem(item);
-                        setSelectedMyItemId(myItems.length > 0 ? myItems[0].id : '');
-                      }}
-                      className="px-3.5 py-2 rounded-xl text-white font-bold text-xs shadow-xs transition-all hover:opacity-90 cursor-pointer"
-                      style={{ background: 'var(--color-primary)' }}
-                    >
-                      Ajukan Barter
-                    </button>
-                  )}
-
-                  <button
-                    onClick={() => onNavigate('product', { productId: item.id })}
-                    className="px-3.5 py-2 rounded-xl border border-gray-300 hover:border-gray-400 text-gray-700 font-semibold text-xs transition-colors cursor-pointer bg-white"
-                  >
-                    Lihat Detail
-                  </button>
-
-                  <button
-                    onClick={() => handleRemoveFromCart(cartId)}
-                    title="Hapus dari Keranjang"
-                    className="p-2 rounded-xl border border-red-200 text-red-500 hover:bg-red-50 transition-colors cursor-pointer"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
       )}
-
-      {/* Modal Ajukan Barter Langsung dari Keranjang */}
-      {barterTargetItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <div
-            className="w-full max-w-lg rounded-2xl p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150 border"
-            style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
-          >
-            <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: 'var(--color-border)' }}>
-              <div>
-                <h3 className="font-bold text-base text-gray-900">Ajukan Penawaran Barter</h3>
-                <p className="text-xs text-gray-500">Pilih salah satu barangmu untuk ditukar dengan barang ini</p>
-              </div>
-              <button
-                onClick={() => setBarterTargetItem(null)}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Target Item Ringkas */}
-            <div className="p-3 rounded-xl bg-gray-50 border border-gray-200 flex items-center gap-3">
-              <img
-                src={barterTargetItem.foto}
-                alt={barterTargetItem.nama}
-                className="w-12 h-12 rounded-lg object-cover"
-                onError={e => {
-                  (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
-                }}
-              />
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-bold text-gray-900 truncate">{barterTargetItem.nama}</p>
-                <p className="text-xs font-semibold text-emerald-700">
-                  Rp {barterTargetItem.harga.toLocaleString('id-ID')}
-                </p>
-              </div>
-            </div>
-
-            {/* Pilihan Barang Milik User */}
-            <div>
-              <label className="block text-xs font-bold text-gray-700 mb-2">
-                Pilih Barang Milikmu ({myItems.length} tersedia untuk barter):
-              </label>
-
-              {myItems.length === 0 ? (
-                <div className="p-4 rounded-xl border border-dashed text-center space-y-2 bg-amber-50/50 border-amber-200">
-                  <p className="text-xs text-gray-600">
-                    Kamu belum memiliki barang yang siap dibarter (status 'barter' atau 'keduanya').
-                  </p>
-                  <button
-                    onClick={() => {
-                      setBarterTargetItem(null);
-                      onNavigate('my-items');
-                    }}
-                    className="text-xs font-bold underline"
-                    style={{ color: 'var(--color-primary)' }}
-                  >
-                    Atur Barang Saya →
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {myItems.map(myItem => (
-                    <button
-                      type="button"
-                      key={myItem.id}
-                      onClick={() => setSelectedMyItemId(myItem.id)}
-                      className={`w-full p-3 rounded-xl border text-left flex items-center justify-between gap-3 transition-all cursor-pointer ${
-                        selectedMyItemId === myItem.id
-                          ? 'border-emerald-600 bg-emerald-50/60 ring-2 ring-emerald-500/20'
-                          : 'border-gray-200 hover:border-gray-300 bg-white'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <img
-                          src={myItem.foto}
-                          alt={myItem.nama}
-                          className="w-10 h-10 rounded-lg object-cover"
-                          onError={e => {
-                            (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
-                          }}
-                        />
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold text-gray-900 truncate">{myItem.nama}</p>
-                          <p className="text-[11px] text-gray-500">
-                            Rp {myItem.harga.toLocaleString('id-ID')} • {myItem.kondisi}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="shrink-0">
-                        {selectedMyItemId === myItem.id && (
-                          <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">
-                            ✓
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Aksi Modal */}
-            <div className="flex items-center justify-end gap-2 pt-2 border-t" style={{ borderColor: 'var(--color-border)' }}>
-              <button
-                type="button"
-                onClick={() => setBarterTargetItem(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer"
-              >
-                Batal
-              </button>
-              <button
-                type="button"
-                disabled={!selectedMyItemId || isSubmittingOffer}
-                onClick={handleSendBarterOffer}
-                className="px-5 py-2 rounded-xl text-xs font-bold text-white transition-all shadow-sm hover:opacity-90 disabled:opacity-50 cursor-pointer"
-                style={{ background: 'var(--color-primary)' }}
-              >
-                {isSubmittingOffer ? 'Mengirim...' : 'Kirim Tawaran Barter'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <Footer />
     </div>
   );
 }
