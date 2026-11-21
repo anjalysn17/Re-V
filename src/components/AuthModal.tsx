@@ -29,7 +29,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
 
   if (!isAuthModalOpen) return null;
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     if (!identifier.trim() || !password) {
@@ -37,7 +37,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
       return;
     }
 
-    const res = login(identifier, password);
+    const res = await login(identifier, password);
     if (!res.success) {
       setErrorMsg(res.message || 'Gagal masuk.');
     } else {
@@ -52,7 +52,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
     }
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     if (!regNama.trim() || !regEmail.trim() || !regPassword) {
@@ -60,7 +60,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
       return;
     }
 
-    const res = register({
+    const res = await register({
       nama: regNama,
       email: regEmail,
       lokasi: regLokasi,

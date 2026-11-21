@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { notifyLocalChange } from '../services/api';
 
 export interface OrderRecord {
   id: string;
@@ -48,6 +49,7 @@ export function addOrderTransaction(
 
   const updated = [newOrder, ...existing];
   localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(updated));
+  notifyLocalChange();
 
   // Trigger event agar OrdersPage langsung ter-update
   window.dispatchEvent(new Event('rev-orders-updated'));
@@ -99,6 +101,7 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
       o.id === orderId ? { ...o, status: newStatus } : o
     );
     localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(updated));
+    notifyLocalChange();
     loadUserOrders();
   };
 

@@ -13,6 +13,7 @@ import SearchResultsPage from './pages/SearchResultsPage';
 import CartPage from './pages/CartPage';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { getDB } from './services/db';
+import { API_ENABLED } from './services/api';
 import AuthModal from './components/AuthModal';
 import AddItemModal from './components/AddItemModal';
 import ResetDemoButton from './components/ResetDemoButton';
@@ -132,6 +133,21 @@ function MainLayout() {
     (window as any).revNavigate = navigate;
   }, []);
 
+  // Segarkan tampilan saat data dari server berubah (mis. chat baru dari pengguna lain),
+  // kecuali saat pengguna sedang mengetik agar isian tidak hilang.
+  useEffect(() => {
+    const onDbUpdated = () => {
+      const el = document.activeElement;
+      const typing =
+        el instanceof HTMLInputElement ||
+        el instanceof HTMLTextAreaElement ||
+        el instanceof HTMLSelectElement;
+      if (!typing) setRefreshKey(prev => prev + 1);
+    };
+    window.addEventListener('rev-db-updated', onDbUpdated);
+    return () => window.removeEventListener('rev-db-updated', onDbUpdated);
+  }, []);
+
   const cartCount = currentUser
     ? (getDB().cart || []).filter(c => c.id_user === currentUser.id).length
     : 0;
@@ -232,9 +248,11 @@ function MainLayout() {
       />
 
       {/* Tombol Reset Data (Sembunyikan di Mobile agar tidak mengganggu UI jempol) */}
-      <div className="hidden md:block">
-        <ResetDemoButton />
-      </div>
+      {!API_ENABLED && (
+        <div className="hidden md:block">
+          <ResetDemoButton />
+        </div>
+      )}
     </div>
   );
 }

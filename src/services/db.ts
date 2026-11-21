@@ -1,4 +1,5 @@
 import { JualBeliDB } from '../types/database';
+import { API_ENABLED, notifyLocalChange, resetLocalCacheForApi } from './api';
 
 export const DB_STORAGE_KEY = 'jualbeliDB';
 export const CURRENT_USER_KEY = 'currentUser';
@@ -216,7 +217,27 @@ export const INITIAL_SEED: JualBeliDB = {
   cart: [],
 };
 
+function getDBApiMode(): JualBeliDB {
+  const empty: JualBeliDB = {
+    users: [],
+    items: [],
+    offers: [],
+    conversations: [],
+    messages: [],
+    notifications: [],
+    cart: [],
+  };
+  try {
+    const raw = localStorage.getItem(DB_STORAGE_KEY);
+    if (!raw) return empty;
+    return { ...empty, ...(JSON.parse(raw) as JualBeliDB) };
+  } catch {
+    return empty;
+  }
+}
+
 export function getDB(): JualBeliDB {
+  if (API_ENABLED) return getDBApiMode();
   try {
     const raw = localStorage.getItem(DB_STORAGE_KEY);
     if (!raw) {
@@ -339,12 +360,17 @@ export function getDB(): JualBeliDB {
 export function saveDB(db: JualBeliDB): void {
   try {
     localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(db));
+    if (API_ENABLED) notifyLocalChange();
   } catch (error) {
     console.error('Gagal menyimpan database ke localStorage:', error);
   }
 }
 
 export function resetDB(): JualBeliDB {
+  if (API_ENABLED) {
+    resetLocalCacheForApi();
+    return getDBApiMode();
+  }
   try {
     localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(INITIAL_SEED));
     localStorage.removeItem(CURRENT_USER_KEY);
@@ -362,4 +388,3 @@ export function generateId(prefix: string, existingList: { id: string }[] = []):
   const max = nums.length > 0 ? Math.max(...nums) : 0;
   return `${prefix}-${String(max + 1).padStart(3, '0')}`;
 }
-
