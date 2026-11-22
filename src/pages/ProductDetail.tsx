@@ -10,13 +10,60 @@ interface ProductDetailProps {
   onCartUpdated?: () => void;
 }
 
+// 5 Kategori baku sesuai kontrak PAKEM.md
+const ITEM_CATEGORIES = [
+  'Elektronik',
+  'Buku & Alat Tulis',
+  'Fashion',
+  'Perlengkapan',
+  'Tas',
+] as const;
+
+const ITEM_CONDITIONS = [
+  'Baru',
+  'Bekas - Seperti Baru',
+  'Bekas - Sangat Baik',
+  'Bekas - Baik',
+] as const;
+
+// Konfigurasi lokasi area kampus & titik aman COD
+export const CAMPUS_LOCATIONS = [
+  'Sekaran (Gerbang Utama UNNES)',
+  'Taman FMIPA UNNES',
+  'Masjid Ulul Albab UNNES',
+  'Perpustakaan Pusat UNNES',
+  'Area Fakultas (FBS / FIP / FIS / FT / FIK / FE / FH)',
+  'Indomaret Point Sekaran Raya',
+  'Patemon, Gunungpati',
+  'Banaran, Gunungpati',
+  'Gang Pete / Taman Siswa Sekaran',
+] as const;
+
 const SAFE_COD_SPOTS = [
   'Gerbang Utama UNNES (Sekaran)',
   'Taman FMIPA UNNES',
   'Masjid Ulul Albab UNNES',
+  'Perpustakaan Pusat UNNES',
   'Indomaret Point Sekaran Raya',
   'Pertigaan Patemon Gunungpati',
 ];
+
+// Helper sanitasi nominal harga agar tidak terpotong tanda titik/koma ribuan
+function parseCleanPrice(value: unknown): number {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+  }
+  if (typeof value === 'string') {
+    const digitsOnly = value.replace(/\D/g, '');
+    return digitsOnly ? Number(digitsOnly) : 0;
+  }
+  return 0;
+}
+
+function formatRupiahInput(value: string | number): string {
+  const numeric = parseCleanPrice(value);
+  return numeric > 0 ? numeric.toLocaleString('id-ID') : '';
+}
 
 export default function ProductDetail({
   productId,
@@ -32,6 +79,18 @@ export default function ProductDetail({
   const [barterNote, setBarterNote] = useState<string>('');
   const [toastMessage, setToastMessage] = useState<string>('');
 
+  // State Modal Edit Barang (khusus pemilik)
+  const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
+  const [editTitle, setEditTitle] = useState<string>('');
+  const [editCategory, setEditCategory] = useState<string>(ITEM_CATEGORIES[0]);
+  const [editCondition, setEditCondition] = useState<string>(ITEM_CONDITIONS[2]);
+  const [editLocation, setEditLocation] = useState<string>(CAMPUS_LOCATIONS[0]);
+  const [editTransactionType, setEditTransactionType] = useState<'jual' | 'barter' | 'keduanya'>('jual');
+  const [editPriceInput, setEditPriceInput] = useState<string>('');
+  const [editWantedItem, setEditWantedItem] = useState<string>('');
+  const [editDescription, setEditDescription] = useState<string>('');
+  const [editIsSold, setEditIsSold] = useState<boolean>(false);
+
   const db = dbService.getDB() as any;
   const allItems: any[] = db.items || [];
   const allUsers: any[] = db.users || [];
@@ -46,16 +105,28 @@ export default function ProductDetail({
     return allItems[0];
   }, [allItems, productId]);
 
+  // Daftar barang milik user yang sedang login untuk opsi barter (Hook harus di atas early return)
+  const myBarterItems = useMemo(() => {
+    if (!currentUser || !rawItem) return [];
+    return allItems.filter((it) => {
+      const uid = it.id_pemilik ?? it.id_user ?? it.sellerId ?? it.ownerId;
+      const isSold = it.status === 'sold' || Boolean(it.terjual);
+      return (
+        String(uid) === String(currentUser.id) &&
+        String(it.id) !== String(rawItem.id) &&
+        !isSold
+      );
+    });
+  }, [allItems, currentUser, rawItem]);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(''), 3500);
   };
 
+  // Simpan selalu via dbService.saveDB agar key `jualbeliDB` dan sync backend berjalan konsisten
   const persistDB = (updatedDB: any) => {
-    if (typeof (dbService as any).saveDB === 'function') {
-      (dbService as any).saveDB(updatedDB);
-    }
-    localStorage.setItem('rev_db', JSON.stringify(updatedDB));
+    dbService.saveDB(updatedDB);
   };
 
   if (!rawItem) {
@@ -78,60 +149,135 @@ export default function ProductDetail({
     );
   }
 
-  // Normalisasi properti barang agar kompatibel dengan berbagai versi skema db.ts
-  const item = {
-    id: rawItem.id,
-    title: rawItem.title || rawItem.nama_barang || 'Barang Mahasiswa UNNES',
-    description:
-      rawItem.description ||
-      rawItem.deskripsi ||
-      'Barang masih sangat layak pakai, siap COD di area sekitar kampus UNNES Gunungpati.',
-    price: Number(rawItem.price ?? rawItem.harga ?? 0),
-    category: rawItem.category || rawItem.kategori || 'Perlengkapan Kos',
-    condition: rawItem.condition || rawItem.kondisi || 'Bekas - Sangat Baik',
-    location: rawItem.location || rawItem.lokasi || 'Sekaran, Gunungpati',
-    image: rawItem.image || rawItem.foto || '/assets/seed-images/placeholder.svg',
-    ownerId: rawItem.id_user ?? rawItem.sellerId ?? rawItem.ownerId ?? 'seller-default',
-    transactionMode: (
-      rawItem.transactionType ||
+  // Normalisasi properti barang (membaca field asli PAKEM.md + alias server)
+  const rawStatus = String(rawItem.status || '').toLowerCase();
+  const isSold = rawStatus === 'sold' || Boolean(rawItem.terjual);
+
+  const normalizedMode = String(
+    rawItem.transactionType ||
+      (rawStatus !== 'sold' && rawStatus !== 'available' ? rawStatus : '') ||
       rawItem.tipe_transaksi ||
       rawItem.mode ||
-      'both'
-    ).toLowerCase(),
-    wantedItem: rawItem.wantedItem || rawItem.barang_dicari || 'Perlengkapan kos / buku kuliah',
+      'keduanya'
+  ).toLowerCase();
+
+  const item = {
+    id: rawItem.id,
+    title: rawItem.nama || rawItem.title || rawItem.nama_barang || 'Barang Mahasiswa UNNES',
+    description:
+      rawItem.deskripsi ||
+      rawItem.description ||
+      'Barang masih sangat layak pakai, siap COD di area sekitar kampus UNNES Gunungpati.',
+    price: parseCleanPrice(rawItem.harga ?? rawItem.price ?? 0),
+    category: rawItem.kategori || rawItem.category || 'Perlengkapan',
+    condition: rawItem.kondisi || rawItem.condition || 'Bekas - Sangat Baik',
+    location: rawItem.lokasi || rawItem.location || 'Sekaran (Gerbang Utama UNNES)',
+    image: rawItem.foto || rawItem.image || '/assets/seed-images/placeholder.svg',
+    ownerId: rawItem.id_pemilik ?? rawItem.id_user ?? rawItem.sellerId ?? rawItem.ownerId ?? 'USR-001',
+    transactionMode: normalizedMode,
+    wantedItem: rawItem.barang_dicari || rawItem.wantedItem || 'Perlengkapan kos / buku kuliah',
   };
 
   const seller = allUsers.find((u) => String(u.id) === String(item.ownerId));
   const sellerName =
     seller?.nama || seller?.name || rawItem.sellerName || rawItem.ownerName || 'Mahasiswa UNNES';
   const isSellerVerified =
-    seller?.is_verified || (seller?.email || '').toLowerCase().includes('unnes.ac.id');
+    Boolean(seller?.is_verified) || (seller?.email || '').toLowerCase().includes('unnes.ac.id');
 
-  const isOwnItem = currentUser && String(currentUser.id) === String(item.ownerId);
+  const isOwnItem = Boolean(currentUser && String(currentUser.id) === String(item.ownerId));
+
+  const isBothMode = item.transactionMode === 'keduanya' || item.transactionMode === 'both';
   const canBuy =
+    isBothMode ||
     item.transactionMode.includes('jual') ||
     item.transactionMode.includes('sell') ||
-    item.transactionMode === 'both' ||
-    item.price > 0;
+    (!item.transactionMode && item.price > 0);
   const canBarter =
+    isBothMode ||
     item.transactionMode.includes('barter') ||
-    item.transactionMode === 'both' ||
     Boolean(rawItem.canBarter);
 
-  // Daftar barang milik user yang sedang login untuk opsi barter
-  const myBarterItems = useMemo(() => {
-    if (!currentUser) return [];
-    return allItems.filter((it) => {
-      const uid = it.id_user ?? it.sellerId ?? it.ownerId;
-      return String(uid) === String(currentUser.id) && String(it.id) !== String(item.id);
-    });
-  }, [allItems, currentUser, item.id]);
+  // Buka modal edit barang dengan data terisi otomatis
+  const handleOpenEditModal = () => {
+    setEditTitle(item.title);
+    setEditCategory(
+      ITEM_CATEGORIES.includes(item.category as any) ? item.category : ITEM_CATEGORIES[3]
+    );
+    setEditCondition(item.condition);
+    setEditLocation(item.location);
 
-  // Helper membuat/membuka ruang chat agar terhubung dengan ChatPage
+    const initialOfferType: 'jual' | 'barter' | 'keduanya' = isBothMode
+      ? 'keduanya'
+      : canBarter && !canBuy
+      ? 'barter'
+      : 'jual';
+    setEditTransactionType(initialOfferType);
+    setEditPriceInput(item.price > 0 ? item.price.toLocaleString('id-ID') : '');
+    setEditWantedItem(item.wantedItem);
+    setEditDescription(item.description);
+    setEditIsSold(isSold);
+    setIsEditModalOpen(true);
+  };
+
+  // Simpan perubahan barang (memperbarui field asli PAKEM.md & seluruh alias server)
+  const handleSaveEditItem = () => {
+    const trimmedTitle = editTitle.trim();
+    if (!trimmedTitle) {
+      alert('Nama barang tidak boleh kosong.');
+      return;
+    }
+
+    const cleanPrice = editTransactionType === 'barter' ? 0 : parseCleanPrice(editPriceInput);
+    if ((editTransactionType === 'jual' || editTransactionType === 'keduanya') && cleanPrice <= 0) {
+      alert('Masukkan nominal harga yang valid untuk barang yang dijual.');
+      return;
+    }
+
+    const latestDB = dbService.getDB() as any;
+    const updatedItems = (latestDB.items || []).map((it: any) => {
+      if (String(it.id) !== String(item.id)) return it;
+
+      const nextStatus = editIsSold ? 'sold' : editTransactionType;
+      return {
+        ...it,
+        // Field asli PAKEM.md
+        nama: trimmedTitle,
+        deskripsi: editDescription.trim() || it.deskripsi,
+        harga: cleanPrice,
+        kategori: editCategory,
+        kondisi: editCondition,
+        lokasi: editLocation,
+        status: nextStatus,
+        terjual: editIsSold,
+        barang_dicari: editWantedItem.trim(),
+        // Alias yang dipakai halaman lain & backend
+        title: trimmedTitle,
+        nama_barang: trimmedTitle,
+        description: editDescription.trim() || it.description,
+        price: cleanPrice,
+        category: editCategory,
+        condition: editCondition,
+        location: editLocation,
+        transactionType: editTransactionType,
+        wantedItem: editWantedItem.trim(),
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    persistDB({
+      ...latestDB,
+      items: updatedItems,
+    });
+
+    setIsEditModalOpen(false);
+    showToast('Perubahan barang berhasil disimpan!');
+  };
+
+  // Helper membuat/membuka ruang chat agar terhubung dengan ChatPage & policy.js
   const createOrOpenChatRoom = (initialText?: string): string => {
     const latestDB = dbService.getDB() as any;
-    const conversations: any[] = latestDB.conversations || [];
-    const messages: any[] = latestDB.messages || [];
+    const conversations: any[] = [...(latestDB.conversations || [])];
+    const messages: any[] = [...(latestDB.messages || [])];
 
     const buyerId = String(currentUser.id);
     const sellerId = String(item.ownerId);
@@ -147,36 +293,50 @@ export default function ProductDetail({
       );
     });
 
-    const convId = existingConv ? String(existingConv.id) : `conv-${Date.now()}`;
+    const convId = existingConv
+      ? String(existingConv.id)
+      : dbService.generateId('CONV', conversations);
+
+    const nowIso = new Date().toISOString();
+    const previewMsg = initialText || `Halo, saya tertarik dengan ${item.title}`;
 
     if (!existingConv) {
       existingConv = {
         id: convId,
         participants: [buyerId, sellerId],
+        id_pembeli: buyerId,
+        id_penjual: sellerId,
         buyerId,
         sellerId,
         buyerName: currentUser.nama || currentUser.name || 'Saya',
         sellerName,
+        id_barang: item.id,
         itemId: item.id,
         itemTitle: item.title,
         itemImage: item.image,
-        lastMessage: initialText || `Halo, saya tertarik dengan ${item.title}`,
-        updatedAt: new Date().toISOString(),
+        pesan_terakhir: previewMsg,
+        lastMessage: previewMsg,
+        updatedAt: nowIso,
       };
       conversations.unshift(existingConv);
     } else if (initialText) {
+      existingConv.pesan_terakhir = initialText;
       existingConv.lastMessage = initialText;
-      existingConv.updatedAt = new Date().toISOString();
+      existingConv.updatedAt = nowIso;
     }
 
     if (initialText) {
       messages.push({
-        id: `msg-${Date.now()}`,
+        id: dbService.generateId('MSG', messages),
+        id_percakapan: convId,
         conversationId: convId,
+        id_pengirim: buyerId,
         senderId: buyerId,
         senderName: currentUser.nama || currentUser.name || 'Saya',
+        isi: initialText,
         text: initialText,
-        createdAt: new Date().toISOString(),
+        waktu: nowIso,
+        createdAt: nowIso,
       });
     }
 
@@ -195,31 +355,42 @@ export default function ProductDetail({
       openAuthModal('login');
       return;
     }
+    if (isSold) {
+      showToast('Maaf, barang ini sudah terjual.');
+      return;
+    }
 
     const latestDB = dbService.getDB() as any;
-    const cart: any[] = latestDB.cart || [];
+    const cart: any[] = [...(latestDB.cart || [])];
 
     const existingIdx = cart.findIndex(
       (c) =>
         String(c.id_user ?? c.userId) === String(currentUser.id) &&
-        String(c.id_item ?? c.itemId) === String(item.id)
+        String(c.id_barang ?? c.id_item ?? c.itemId) === String(item.id)
     );
 
     if (existingIdx >= 0) {
-      cart[existingIdx].quantity = (cart[existingIdx].quantity || 1) + 1;
+      const nextQty = (cart[existingIdx].jumlah ?? cart[existingIdx].quantity ?? 1) + 1;
+      cart[existingIdx].jumlah = nextQty;
+      cart[existingIdx].quantity = nextQty;
     } else {
       cart.push({
-        id: `cart-${Date.now()}`,
+        id: dbService.generateId('CRT', cart),
         id_user: currentUser.id,
         userId: currentUser.id,
+        id_barang: item.id,
         id_item: item.id,
         itemId: item.id,
+        nama: item.title,
         title: item.title,
+        harga: item.price,
         price: item.price,
+        foto: item.image,
         image: item.image,
         sellerId: item.ownerId,
         sellerName,
         type: 'beli',
+        jumlah: 1,
         quantity: 1,
       });
     }
@@ -233,6 +404,10 @@ export default function ProductDetail({
   const handleDirectBuy = () => {
     if (!currentUser) {
       openAuthModal('login');
+      return;
+    }
+    if (isSold) {
+      showToast('Maaf, barang ini sudah terjual.');
       return;
     }
 
@@ -263,6 +438,10 @@ export default function ProductDetail({
       openAuthModal('login');
       return;
     }
+    if (isSold) {
+      showToast('Maaf, barang ini sudah selesai ditransaksikan.');
+      return;
+    }
 
     const offeredRaw = myBarterItems.find((it) => String(it.id) === String(selectedOfferItemId));
     if (!offeredRaw) {
@@ -270,7 +449,7 @@ export default function ProductDetail({
       return;
     }
 
-    const offeredTitle = offeredRaw.title || offeredRaw.nama_barang || 'Barang Penawaran';
+    const offeredTitle = offeredRaw.nama || offeredRaw.title || offeredRaw.nama_barang || 'Barang Penawaran';
 
     addOrderTransaction({
       userId: currentUser.id,
@@ -330,18 +509,26 @@ export default function ProductDetail({
           <img
             src={item.image}
             alt={item.title}
-            className="w-full h-full object-cover"
+            className={`w-full h-full object-cover ${isSold ? 'opacity-70 grayscale-[30%]' : ''}`}
           />
           <div className="absolute top-3 left-3 flex flex-wrap gap-1.5">
-            {canBuy && (
-              <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-white/95 text-emerald-800 shadow-sm">
-                Dijual
+            {isSold ? (
+              <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-gray-900/90 text-white shadow-sm">
+                Sudah Terjual / Selesai
               </span>
-            )}
-            {canBarter && (
-              <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500 text-white shadow-sm">
-                Bisa Dibarter
-              </span>
+            ) : (
+              <>
+                {canBuy && (
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-white/95 text-emerald-800 shadow-sm">
+                    Dijual
+                  </span>
+                )}
+                {canBarter && (
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500 text-white shadow-sm">
+                    Bisa Dibarter
+                  </span>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -349,7 +536,7 @@ export default function ProductDetail({
         {/* Informasi & Aksi */}
         <div className="p-5 sm:p-6 flex flex-col justify-between space-y-5">
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-xs text-gray-500">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
               <span className="px-2.5 py-0.5 rounded-md bg-gray-100 font-medium text-gray-700">
                 {item.category}
               </span>
@@ -357,12 +544,15 @@ export default function ProductDetail({
               <span>{item.condition}</span>
             </div>
 
-            <h1 className="text-xl sm:text-2xl font-bold text-gray-900 leading-snug">
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900 leading-snug break-words">
               {item.title}
             </h1>
 
             {canBuy ? (
-              <p className="text-2xl font-extrabold" style={{ color: 'var(--color-primary, #567257)' }}>
+              <p
+                className="text-2xl font-extrabold break-words"
+                style={{ color: 'var(--color-primary, #567257)' }}
+              >
                 Rp {item.price.toLocaleString('id-ID')}
               </p>
             ) : (
@@ -426,7 +616,7 @@ export default function ProductDetail({
             </div>
 
             {/* Pilihan Titik Aman COD */}
-            {!isOwnItem && (
+            {!isOwnItem && !isSold && (
               <div>
                 <label className="block text-[11px] font-bold text-gray-700 mb-1">
                   Pilih Rekomendasi Titik Aman COD:
@@ -445,11 +635,32 @@ export default function ProductDetail({
               </div>
             )}
 
-            {/* Tombol Aksi Transaksi */}
+            {/* Tombol Aksi Transaksi / Aksi Pemilik */}
             {isOwnItem ? (
-              <div className="p-3 rounded-xl bg-gray-50 border border-gray-200 text-center">
-                <p className="text-xs text-gray-600 font-medium">
+              <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 space-y-2.5">
+                <p className="text-xs text-gray-600 font-medium text-center">
                   Ini adalah barang yang kamu unggah sendiri.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={handleOpenEditModal}
+                    className="py-2.5 px-3 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-95"
+                    style={{ background: 'var(--color-primary, #567257)' }}
+                  >
+                    Edit Barang
+                  </button>
+                  <button
+                    onClick={() => onNavigate('my-items')}
+                    className="py-2.5 px-3 rounded-xl text-xs font-bold border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                  >
+                    Kelola Barang Saya
+                  </button>
+                </div>
+              </div>
+            ) : isSold ? (
+              <div className="p-3.5 rounded-xl bg-gray-100 border border-gray-200 text-center">
+                <p className="text-xs font-bold text-gray-700">
+                  Barang ini sudah terjual atau selesai dibarter.
                 </p>
               </div>
             ) : (
@@ -496,6 +707,189 @@ export default function ProductDetail({
         </div>
       </div>
 
+      {/* Modal Edit Barang (Untuk Pemilik) */}
+      {isEditModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+              <h3 className="text-base font-bold text-gray-900">Edit Detail Barang</h3>
+              <button
+                onClick={() => setIsEditModalOpen(false)}
+                className="text-gray-400 hover:text-gray-700 text-lg font-bold px-2"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Nama Barang</label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 focus:outline-none focus:border-emerald-600"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Kategori</label>
+                  <select
+                    value={editCategory}
+                    onChange={(e) => setEditCategory(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-emerald-600"
+                  >
+                    {ITEM_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Kondisi</label>
+                  <select
+                    value={editCondition}
+                    onChange={(e) => setEditCondition(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-emerald-600"
+                  >
+                    {ITEM_CONDITIONS.map((cond) => (
+                      <option key={cond} value={cond}>
+                        {cond}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Lokasi Barang / Area Kampus
+                </label>
+                <select
+                  value={editLocation}
+                  onChange={(e) => setEditLocation(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-emerald-600"
+                >
+                  {!CAMPUS_LOCATIONS.includes(editLocation as any) && (
+                    <option value={editLocation}>{editLocation}</option>
+                  )}
+                  {CAMPUS_LOCATIONS.map((loc) => (
+                    <option key={loc} value={loc}>
+                      {loc}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Jenis Penawaran</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      { value: 'jual', label: 'Dijual' },
+                      { value: 'barter', label: 'Barter' },
+                      { value: 'keduanya', label: 'Jual / Barter' },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setEditTransactionType(opt.value)}
+                      className={`py-2 px-2 rounded-xl text-xs font-bold border transition-colors ${
+                        editTransactionType === opt.value
+                          ? 'border-emerald-700 bg-emerald-50 text-emerald-800'
+                          : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {(editTransactionType === 'jual' || editTransactionType === 'keduanya') && (
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    Harga Jual (Rp)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-500">
+                      Rp
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editPriceInput}
+                      onChange={(e) => setEditPriceInput(formatRupiahInput(e.target.value))}
+                      placeholder="Contoh: 150.000"
+                      className="w-full pl-9 pr-3 py-2 text-xs font-semibold rounded-xl border border-gray-200 focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {(editTransactionType === 'barter' || editTransactionType === 'keduanya') && (
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    Preferensi Barang Barter
+                  </label>
+                  <input
+                    type="text"
+                    value={editWantedItem}
+                    onChange={(e) => setEditWantedItem(e.target.value)}
+                    placeholder="Contoh: Buku kalkulus / lampu belajar"
+                    className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Deskripsi</label>
+                <textarea
+                  rows={3}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 focus:outline-none focus:border-emerald-600"
+                />
+              </div>
+
+              <label className="flex items-center gap-2 p-2.5 rounded-xl bg-gray-50 border border-gray-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editIsSold}
+                  onChange={(e) => setEditIsSold(e.target.checked)}
+                  className="accent-emerald-700"
+                />
+                <span className="text-xs font-semibold text-gray-700">
+                  Tandai barang ini sudah terjual / selesai dibarter
+                </span>
+              </label>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsEditModalOpen(false)}
+                className="flex-1 py-2.5 rounded-xl text-xs font-bold border border-gray-200 text-gray-700 hover:bg-gray-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveEditItem}
+                className="flex-1 py-2.5 rounded-xl text-xs font-bold text-white shadow-sm"
+                style={{ background: 'var(--color-primary, #567257)' }}
+              >
+                Simpan Perubahan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal Pengajuan Barter */}
       {isBarterModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -518,7 +912,7 @@ export default function ProductDetail({
             {myBarterItems.length === 0 ? (
               <div className="text-center py-6 space-y-3">
                 <p className="text-xs text-gray-500">
-                  Kamu belum memiliki barang di inventaris untuk ditawarkan barter.
+                  Kamu belum memiliki barang aktif di inventaris untuk ditawarkan barter.
                 </p>
                 {onOpenAddItem && (
                   <button
@@ -542,6 +936,8 @@ export default function ProductDetail({
                   <div className="space-y-2 max-h-48 overflow-y-auto">
                     {myBarterItems.map((myIt) => {
                       const isSelected = String(selectedOfferItemId) === String(myIt.id);
+                      const myTitle = myIt.nama || myIt.title || myIt.nama_barang;
+                      const myPrice = parseCleanPrice(myIt.harga ?? myIt.price ?? 0);
                       return (
                         <label
                           key={myIt.id}
@@ -560,16 +956,14 @@ export default function ProductDetail({
                             className="accent-amber-600"
                           />
                           <img
-                            src={myIt.image || myIt.foto || '/assets/seed-images/placeholder.svg'}
-                            alt={myIt.title || myIt.nama_barang}
+                            src={myIt.foto || myIt.image || '/assets/seed-images/placeholder.svg'}
+                            alt={myTitle}
                             className="w-10 h-10 rounded-lg object-cover bg-gray-100"
                           />
                           <div className="min-w-0 flex-1">
-                            <p className="text-xs font-bold text-gray-900 truncate">
-                              {myIt.title || myIt.nama_barang}
-                            </p>
+                            <p className="text-xs font-bold text-gray-900 truncate">{myTitle}</p>
                             <p className="text-[11px] text-gray-500">
-                              Estimasi Rp {Number(myIt.price ?? myIt.harga ?? 0).toLocaleString('id-ID')}
+                              Estimasi Rp {myPrice.toLocaleString('id-ID')}
                             </p>
                           </div>
                         </label>

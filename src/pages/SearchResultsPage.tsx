@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import Footer from '../components/Footer';
 import { getDB } from '../services/db';
 
@@ -6,30 +7,83 @@ interface SearchResultsPageProps {
   onNavigate: (page: string, params?: any) => void;
 }
 
+function parseSafePrice(raw: unknown): number {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'string') {
+    const digits = raw.replace(/\D/g, '');
+    return digits ? Number(digits) : 0;
+  }
+  return 0;
+}
+
 export default function SearchResultsPage({ query, onNavigate }: SearchResultsPageProps) {
+  const [selectedLocation, setSelectedLocation] = useState<string>('all');
+
   const db = getDB();
   const trimmedQuery = (query || '').trim().toLowerCase();
 
-  // Filter barang yang nama ATAU deskripsi ATAU kategori-nya mengandung query (case-insensitive)
-  const filteredItems = db.items.filter(item => {
-    if (!trimmedQuery) return true;
-    const matchName = item.nama && item.nama.toLowerCase().includes(trimmedQuery);
-    const matchDesc = item.deskripsi && item.deskripsi.toLowerCase().includes(trimmedQuery);
-    const matchCategory = item.kategori && item.kategori.toLowerCase().includes(trimmedQuery);
-    return matchName || matchDesc || matchCategory;
-  });
+  // Normalisasi item agar aman terhadap alias field backend & data lama yang belum lengkap
+  const normalizedItems = useMemo(() => {
+    return (db.items || []).map((item, idx) => {
+      const raw = item as any;
+      const name: string = item.nama || raw.title || raw.nama_barang || 'Barang Tanpa Nama';
+      const description: string = item.deskripsi || '';
+      const category: string = item.kategori || 'Lainnya';
+      const safePrice = parseSafePrice(item.harga ?? raw.price ?? 0);
+      const fullLocation: string = (item.lokasi || 'Kampus UNNES').trim();
+      const shortLocation: string = fullLocation.split(',')[0].trim() || 'Kampus UNNES';
+      const kondisi: string = item.kondisi || 'Grade A';
+      const offerType: string = raw.transactionType || item.status || 'jual';
+      const isSold: boolean = Boolean(raw.terjual) || item.status === 'sold';
 
-  const products = filteredItems.map((item, idx) => ({
-    id: item.id,
-    name: item.nama,
-    price: `Rp ${item.harga.toLocaleString('id-ID')}`,
-    location: item.lokasi.split(',')[0],
-    img: item.foto,
-    grade: item.kondisi.includes('A') ? 'A' : item.kondisi.includes('B') ? 'B' : item.kondisi.includes('C') ? 'C' : 'A',
-    barter: item.status === 'barter' || item.status === 'keduanya',
-    sold: (idx % 8) + 2,
-    kategori: item.kategori || 'Lainnya',
-  }));
+      return {
+        id: item.id,
+        name,
+        description,
+        category,
+        rawPrice: safePrice,
+        price:
+          safePrice === 0 && offerType === 'barter'
+            ? 'Barter'
+            : `Rp ${safePrice.toLocaleString('id-ID')}`,
+        fullLocation,
+        location: shortLocation,
+        img: item.foto || '/assets/seed-images/placeholder.svg',
+        grade: kondisi.includes('A') ? 'A' : kondisi.includes('B') ? 'B' : kondisi.includes('C') ? 'C' : 'A',
+        barter: offerType === 'barter' || offerType === 'keduanya',
+        isSold,
+        sold: (idx % 8) + 2,
+      };
+    });
+  }, [db.items]);
+
+  // Daftar lokasi unik dari katalog untuk filter lokasi
+  const availableLocations = useMemo(() => {
+    const unique = new Set<string>();
+    normalizedItems.forEach(item => {
+      if (item.location) unique.add(item.location);
+    });
+    return Array.from(unique);
+  }, [normalizedItems]);
+
+  // Filter berdasarkan kata kunci (nama, deskripsi, kategori, atau lokasi) + filter lokasi aktif
+  const products = useMemo(() => {
+    return normalizedItems.filter(item => {
+      const matchesLocation =
+        selectedLocation === 'all' ||
+        item.location.toLowerCase() === selectedLocation.toLowerCase();
+
+      if (!matchesLocation) return false;
+      if (!trimmedQuery) return true;
+
+      return (
+        item.name.toLowerCase().includes(trimmedQuery) ||
+        item.description.toLowerCase().includes(trimmedQuery) ||
+        item.category.toLowerCase().includes(trimmedQuery) ||
+        item.fullLocation.toLowerCase().includes(trimmedQuery)
+      );
+    });
+  }, [normalizedItems, selectedLocation, trimmedQuery]);
 
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-6 space-y-6">
@@ -46,29 +100,95 @@ export default function SearchResultsPage({ query, onNavigate }: SearchResultsPa
         </button>
         <span>/</span>
         <span>Pencarian</span>
-        <span>/</span>
-        <span className="text-gray-900 font-bold truncate max-w-xs">"{query}"</span>
+        {query && (
+          <>
+            <span>/</span>
+            <span className="text-gray-900 font-bold truncate max-w-xs">"{query}"</span>
+          </>
+        )}
       </nav>
 
-      {/* Header Hasil Pencarian */}
-      <div className="border-b pb-4" style={{ borderColor: 'var(--color-border)' }}>
-        <h1
-          className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight"
-          style={{ fontFamily: 'var(--font-display)' }}
-        >
-          Hasil Pencarian
-        </h1>
-        <p className="text-xs text-gray-500 mt-1">
-          {products.length > 0 ? (
-            <>
-              Menampilkan <span className="font-bold text-gray-800">{products.length}</span> barang untuk kata kunci <span className="font-bold text-gray-800">"{query}"</span>
-            </>
-          ) : (
-            <>
-              Tidak ada hasil yang ditemukan untuk <span className="font-bold text-gray-800">"{query}"</span>
-            </>
-          )}
-        </p>
+      {/* Header Hasil Pencarian & Filter Lokasi */}
+      <div
+        className="border-b pb-4 flex flex-col md:flex-row md:items-end justify-between gap-4"
+        style={{ borderColor: 'var(--color-border)' }}
+      >
+        <div>
+          <h1
+            className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight"
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
+            Hasil Pencarian
+          </h1>
+          <p className="text-xs text-gray-500 mt-1">
+            {products.length > 0 ? (
+              <>
+                Menampilkan <span className="font-bold text-gray-800">{products.length}</span> barang
+                {query ? (
+                  <>
+                    {' '}untuk kata kunci <span className="font-bold text-gray-800">"{query}"</span>
+                  </>
+                ) : null}
+                {selectedLocation !== 'all' ? (
+                  <>
+                    {' '}di area <span className="font-bold text-gray-800">{selectedLocation}</span>
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <>
+                Tidak ada hasil yang ditemukan
+                {query ? (
+                  <>
+                    {' '}untuk <span className="font-bold text-gray-800">"{query}"</span>
+                  </>
+                ) : null}
+                {selectedLocation !== 'all' ? (
+                  <>
+                    {' '}di area <span className="font-bold text-gray-800">{selectedLocation}</span>
+                  </>
+                ) : null}
+              </>
+            )}
+          </p>
+        </div>
+
+        {/* Filter Lokasi COD */}
+        {availableLocations.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] font-semibold text-gray-500 mr-1">Lokasi:</span>
+            <button
+              type="button"
+              onClick={() => setSelectedLocation('all')}
+              className="px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer"
+              style={
+                selectedLocation === 'all'
+                  ? { background: 'var(--color-primary)', color: 'white', borderColor: 'var(--color-primary)' }
+                  : { background: 'var(--color-card)', color: '#4b5563', borderColor: 'var(--color-border)' }
+              }
+            >
+              Semua
+            </button>
+            {availableLocations.map(loc => {
+              const active = selectedLocation.toLowerCase() === loc.toLowerCase();
+              return (
+                <button
+                  key={loc}
+                  type="button"
+                  onClick={() => setSelectedLocation(loc)}
+                  className="px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer"
+                  style={
+                    active
+                      ? { background: 'var(--color-primary)', color: 'white', borderColor: 'var(--color-primary)' }
+                      : { background: 'var(--color-card)', color: '#4b5563', borderColor: 'var(--color-border)' }
+                  }
+                >
+                  {loc}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Grid Hasil Pencarian */}
@@ -91,11 +211,22 @@ export default function SearchResultsPage({ query, onNavigate }: SearchResultsPa
               Barang tidak ditemukan
             </h3>
             <p className="text-xs text-gray-500">
-              Tidak ada barang yang cocok dengan kata kunci "{query}". Coba gunakan kata kunci lain yang lebih umum, periksa ejaan, atau jelajahi kategori yang tersedia.
+              Tidak ada barang yang cocok dengan kriteria pencarian saat ini. Coba ubah filter lokasi, gunakan kata kunci yang lebih umum, atau jelajahi semua barang di beranda.
             </p>
           </div>
-          <div className="pt-2">
+          <div className="pt-2 flex items-center justify-center gap-2 flex-wrap">
+            {selectedLocation !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setSelectedLocation('all')}
+                className="px-4 py-2.5 rounded-xl font-bold text-xs border transition-all hover:bg-gray-50 cursor-pointer"
+                style={{ borderColor: 'var(--color-border)', color: '#374151' }}
+              >
+                Reset Filter Lokasi
+              </button>
+            )}
             <button
+              type="button"
               onClick={() => onNavigate('home')}
               className="px-5 py-2.5 rounded-xl font-bold text-xs text-white shadow-sm transition-all hover:opacity-90 cursor-pointer"
               style={{ background: 'var(--color-accent)' }}
@@ -110,7 +241,9 @@ export default function SearchResultsPage({ query, onNavigate }: SearchResultsPa
             <button
               key={product.id}
               onClick={() => onNavigate('product', { productId: product.id })}
-              className="rounded-2xl border overflow-hidden text-left group hover:shadow-lg hover:-translate-y-1 transition-all duration-200 cursor-pointer"
+              className={`rounded-2xl border overflow-hidden text-left group hover:shadow-lg hover:-translate-y-1 transition-all duration-200 cursor-pointer ${
+                product.isSold ? 'opacity-75' : ''
+              }`}
               style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
             >
               <div className="relative aspect-square overflow-hidden bg-gray-100">
@@ -137,6 +270,11 @@ export default function SearchResultsPage({ query, onNavigate }: SearchResultsPa
                       Barter
                     </span>
                   )}
+                  {product.isSold && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-600 text-white">
+                      Terjual
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="p-3">
@@ -144,13 +282,13 @@ export default function SearchResultsPage({ query, onNavigate }: SearchResultsPa
                   {product.name}
                 </p>
                 <p
-                  className="text-base font-black mt-1.5"
+                  className="text-sm sm:text-base font-black mt-1.5 break-words"
                   style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-display)' }}
                 >
                   {product.price}
                 </p>
-                <div className="flex items-center justify-between mt-2">
-                  <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#f0ebe2] text-[11px] text-gray-600">
+                <div className="flex items-center justify-between gap-1.5 mt-2">
+                  <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#f0ebe2] text-[11px] text-gray-600 max-w-[65%]">
                     <svg className="w-3 h-3 shrink-0 fill-current text-gray-500" viewBox="0 0 20 20">
                       <path
                         fillRule="evenodd"
@@ -158,9 +296,9 @@ export default function SearchResultsPage({ query, onNavigate }: SearchResultsPa
                         clipRule="evenodd"
                       />
                     </svg>
-                    <span>{product.location}</span>
+                    <span className="truncate">{product.location}</span>
                   </div>
-                  <span className="text-[10px]" style={{ color: 'var(--color-muted)' }}>
+                  <span className="text-[10px] shrink-0" style={{ color: 'var(--color-muted)' }}>
                     {product.sold} terjual
                   </span>
                 </div>
