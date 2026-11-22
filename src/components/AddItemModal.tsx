@@ -7,6 +7,8 @@ interface AddItemModalProps {
   isOpen: boolean;
   onClose: () => void;
   onItemAdded?: () => void;
+  editItem?: Item | null;
+  onItemUpdated?: () => void;
 }
 
 const CATEGORIES = [
@@ -24,6 +26,23 @@ const CONDITIONS = [
   'Grade C (Bekas dengan Cacat Minor)',
 ];
 
+export const CAMPUS_LOCATIONS = [
+  'Sekaran - Gerbang Utama UNNES',
+  'Perpustakaan Pusat / Rektorat UNNES',
+  'Fakultas Teknik (FT)',
+  'Fakultas MIPA (FMIPA)',
+  'Fakultas Ilmu Pendidikan (FIP)',
+  'Fakultas Bahasa & Seni (FBS)',
+  'Fakultas Ilmu Sosial (FIS)',
+  'Fakultas Ekonomi & Bisnis (FEB)',
+  'Fakultas Ilmu Keolahragaan (FIK)',
+  'Fakultas Hukum (FH)',
+  'Patemon, Gunungpati',
+  'Banaran, Gunungpati',
+  'Kalisegoro, Gunungpati',
+  'Ngijo, Gunungpati',
+];
+
 const PHOTO_PRESETS = [
   { label: 'Placeholder Netral', url: '/assets/seed-images/placeholder.svg' },
   { label: 'Elektronik', url: '/elektronik.jpg' },
@@ -31,6 +50,25 @@ const PHOTO_PRESETS = [
   { label: 'Fashion', url: '/bajuu.jpg' },
   { label: 'Perlengkapan', url: '/perlengkapan.jpg' },
 ];
+
+const DEFAULT_PLACEHOLDER = '/assets/seed-images/placeholder.svg';
+
+/**
+ * Mengambil hanya digit angka agar nilai harga tidak pernah terpotong oleh titik/koma.
+ */
+function parseHarga(val: string | number | undefined): number {
+  const digits = String(val ?? '').replace(/\D/g, '');
+  return digits ? Number(digits) : 0;
+}
+
+/**
+ * Memformat angka ke format ribuan Indonesia (contoh: 350000 -> "350.000").
+ */
+function formatRibuan(val: string | number | undefined): string {
+  const num = parseHarga(val);
+  if (!num) return '';
+  return num.toLocaleString('id-ID');
+}
 
 /**
  * Kompres dan resize gambar ke lebar maksimal (default 800px) menggunakan Canvas,
@@ -91,31 +129,141 @@ function compressImage(file: File, maxWidth = 800, quality = 0.8): Promise<strin
   });
 }
 
-export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemModalProps) {
+export default function AddItemModal({
+  isOpen,
+  onClose,
+  onItemAdded,
+  editItem = null,
+  onItemUpdated,
+}: AddItemModalProps) {
   const { currentUser } = useAuth();
+  const isEditMode = Boolean(editItem);
 
   const [nama, setNama] = useState('');
   const [kategori, setKategori] = useState(CATEGORIES[0]);
-  const [harga, setHarga] = useState<number | string>('');
+  const [hargaDisplay, setHargaDisplay] = useState('');
   const [kondisi, setKondisi] = useState(CONDITIONS[1]);
-  const [foto, setFoto] = useState('/assets/seed-images/placeholder.svg');
+  const [foto, setFoto] = useState(DEFAULT_PLACEHOLDER);
   const [photoSource, setPhotoSource] = useState<'upload' | 'preset' | 'url'>('upload');
   const [uploadedFileName, setUploadedFileName] = useState('');
   const [isCompressing, setIsCompressing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [status, setStatus] = useState<'jual' | 'barter' | 'keduanya'>('keduanya');
-  const [lokasi, setLokasi] = useState('');
+  const [selectedPresetLocation, setSelectedPresetLocation] = useState<string>(CAMPUS_LOCATIONS[0]);
+  const [customLocation, setCustomLocation] = useState('');
+  const [isLocating, setIsLocating] = useState(false);
+
   const [deskripsi, setDeskripsi] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [showToast, setShowToast] = useState(false);
 
+  // Sinkronkan state form setiap kali modal dibuka atau editItem berubah
   useEffect(() => {
-    if (currentUser?.lokasi) {
-      setLokasi(currentUser.lokasi);
+    if (!isOpen) return;
+
+    setErrorMsg('');
+    setShowToast(false);
+    setUploadedFileName('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+
+    if (editItem) {
+      const extendedItem = editItem as Item & Record<string, unknown>;
+      const initialName = String(
+        editItem.nama || extendedItem.title || extendedItem.nama_barang || ''
+      );
+      const initialPrice = parseHarga(editItem.harga ?? (extendedItem.price as number | undefined));
+      const initialFoto = editItem.foto || DEFAULT_PLACEHOLDER;
+
+      // Baca tipe penawaran dari transactionType terlebih dahulu jika status sudah berubah jadi 'sold'/'available'
+      const rawOffer = String(extendedItem.transactionType || editItem.status || 'keduanya');
+      const validOffer: 'jual' | 'barter' | 'keduanya' =
+        rawOffer === 'jual' || rawOffer === 'barter' || rawOffer === 'keduanya'
+          ? rawOffer
+          : 'keduanya';
+
+      const initialLoc = (editItem.lokasi || currentUser?.lokasi || CAMPUS_LOCATIONS[0]).trim();
+      const isKnownLocation = CAMPUS_LOCATIONS.includes(initialLoc);
+
+      setNama(initialName);
+      setKategori(CATEGORIES.includes(editItem.kategori) ? editItem.kategori : CATEGORIES[0]);
+      setHargaDisplay(formatRibuan(initialPrice));
+      setKondisi(CONDITIONS.includes(editItem.kondisi) ? editItem.kondisi : CONDITIONS[1]);
+      setFoto(initialFoto);
+      setStatus(validOffer);
+      setDeskripsi(editItem.deskripsi || '');
+
+      if (isKnownLocation) {
+        setSelectedPresetLocation(initialLoc);
+        setCustomLocation('');
+      } else {
+        setSelectedPresetLocation('CUSTOM');
+        setCustomLocation(initialLoc);
+      }
+
+      if (initialFoto.startsWith('data:')) {
+        setPhotoSource('upload');
+        setUploadedFileName('Foto tersimpan');
+      } else if (PHOTO_PRESETS.some(p => p.url === initialFoto)) {
+        setPhotoSource('preset');
+      } else {
+        setPhotoSource('url');
+      }
+    } else {
+      const defaultLoc = (currentUser?.lokasi || CAMPUS_LOCATIONS[0]).trim();
+      const isKnownDefault = CAMPUS_LOCATIONS.includes(defaultLoc);
+
+      setNama('');
+      setKategori(CATEGORIES[0]);
+      setHargaDisplay('');
+      setKondisi(CONDITIONS[1]);
+      setFoto(DEFAULT_PLACEHOLDER);
+      setPhotoSource('upload');
+      setStatus('keduanya');
+      setDeskripsi('');
+
+      if (isKnownDefault) {
+        setSelectedPresetLocation(defaultLoc);
+        setCustomLocation('');
+      } else {
+        setSelectedPresetLocation('CUSTOM');
+        setCustomLocation(defaultLoc);
+      }
     }
-  }, [currentUser]);
+  }, [isOpen, editItem, currentUser]);
 
   if (!isOpen) return null;
+
+  const handleHargaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawDigits = e.target.value.replace(/\D/g, '');
+    // Batasi maksimal 12 digit (hingga ratusan miliar) agar aman dan tidak overflow
+    const trimmedDigits = rawDigits.slice(0, 12);
+    setHargaDisplay(formatRibuan(trimmedDigits));
+  };
+
+  const handleDetectLocation = () => {
+    if (!navigator.geolocation) {
+      setErrorMsg('Browser Anda tidak mendukung deteksi lokasi GPS.');
+      return;
+    }
+
+    setErrorMsg('');
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const lat = pos.coords.latitude.toFixed(5);
+        const lng = pos.coords.longitude.toFixed(5);
+        setSelectedPresetLocation('CUSTOM');
+        setCustomLocation(`Area Kampus UNNES (${lat}, ${lng})`);
+        setIsLocating(false);
+      },
+      () => {
+        setErrorMsg('Gagal mengakses lokasi GPS. Pastikan izin lokasi browser aktif atau pilih titik COD dari daftar.');
+        setIsLocating(false);
+      },
+      { timeout: 8000 }
+    );
+  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setErrorMsg('');
@@ -158,38 +306,104 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
       return;
     }
 
-    if (!nama.trim()) {
+    const cleanNama = nama.trim();
+    if (!cleanNama) {
       setErrorMsg('Nama barang wajib diisi.');
       return;
     }
 
-    if (!harga || Number(harga) <= 0) {
-      setErrorMsg('Harga harus berupa angka yang valid.');
+    const numericHarga = parseHarga(hargaDisplay);
+    if (!numericHarga || numericHarga <= 0) {
+      setErrorMsg('Harga harus berupa angka lebih dari 0.');
       return;
     }
 
+    const resolvedLocation =
+      selectedPresetLocation === 'CUSTOM'
+        ? customLocation.trim() || currentUser.lokasi || CAMPUS_LOCATIONS[0]
+        : selectedPresetLocation;
+
+    const cleanFoto = foto.trim() || DEFAULT_PLACEHOLDER;
+    const cleanDeskripsi = deskripsi.trim() || 'Tidak ada deskripsi.';
     const db = getDB();
+
+    if (isEditMode && editItem) {
+      if (editItem.id_pemilik !== currentUser.id && currentUser.role !== 'admin') {
+        setErrorMsg('Anda tidak memiliki izin untuk mengubah barang ini.');
+        return;
+      }
+
+      const idx = db.items.findIndex(item => item.id === editItem.id);
+      if (idx === -1) {
+        setErrorMsg('Data barang tidak ditemukan. Silakan muat ulang halaman.');
+        return;
+      }
+
+      const existing = db.items[idx] as Item & Record<string, unknown>;
+      // Pertahankan status 'sold' jika barang memang sudah ditandai terjual di Barang Saya
+      const preservedStatus =
+        (existing.status as string) === 'sold' ? ('sold' as Item['status']) : status;
+
+      const updatedItem: Item & Record<string, unknown> = {
+        ...existing,
+        id: editItem.id,
+        id_pemilik: editItem.id_pemilik,
+        id_user: editItem.id_pemilik,
+        ownerId: editItem.id_pemilik,
+        nama: cleanNama,
+        title: cleanNama,
+        nama_barang: cleanNama,
+        kategori: String(kategori).trim(),
+        harga: numericHarga,
+        price: numericHarga,
+        kondisi,
+        foto: cleanFoto,
+        status: preservedStatus,
+        transactionType: status,
+        lokasi: resolvedLocation,
+        deskripsi: cleanDeskripsi,
+      };
+
+      db.items[idx] = updatedItem as Item;
+      saveDB(db);
+
+      setShowToast(true);
+      setTimeout(() => {
+        setShowToast(false);
+        onItemUpdated?.();
+        onClose();
+      }, 750);
+      return;
+    }
+
+    // Mode Tambah Barang Baru
     const existingNums = db.items
       .map(i => parseInt(i.id.replace('ITM-', ''), 10))
       .filter(n => !isNaN(n));
     const nextNumber = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
     const newId = `ITM-${String(nextNumber).padStart(3, '0')}`;
 
-    const newItem: Item = {
+    const newItem: Item & Record<string, unknown> = {
       id: newId,
-      nama: nama.trim(),
+      nama: cleanNama,
+      title: cleanNama,
+      nama_barang: cleanNama,
       kategori: String(kategori).trim(),
-      harga: Number(harga),
+      harga: numericHarga,
+      price: numericHarga,
       kondisi,
-      foto: foto.trim() || '/assets/seed-images/placeholder.svg',
+      foto: cleanFoto,
       status,
+      transactionType: status,
       id_pemilik: currentUser.id,
-      lokasi: lokasi.trim() || currentUser.lokasi || 'Sekaran, Gunungpati',
-      deskripsi: deskripsi.trim() || 'Tidak ada deskripsi.',
+      id_user: currentUser.id,
+      ownerId: currentUser.id,
+      lokasi: resolvedLocation,
+      deskripsi: cleanDeskripsi,
     };
 
     // Tambahkan di awal agar langsung muncul paling atas
-    db.items.unshift(newItem);
+    db.items.unshift(newItem as Item);
     saveDB(db);
 
     setShowToast(true);
@@ -197,16 +411,7 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
       setShowToast(false);
       onItemAdded?.();
       onClose();
-      // Reset form
-      setNama('');
-      setHarga('');
-      setKategori(CATEGORIES[0]);
-      setDeskripsi('');
-      setFoto('/assets/seed-images/placeholder.svg');
-      setUploadedFileName('');
-      setPhotoSource('upload');
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }, 900);
+    }, 800);
   };
 
   return (
@@ -232,11 +437,14 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
               className="w-7 h-7 rounded-lg flex items-center justify-center font-black text-sm"
               style={{ background: 'var(--color-bg)', color: 'var(--color-primary)' }}
             >
-              +
+              {isEditMode ? '✎' : '+'}
             </span>
-            <h3 className="font-bold text-white text-base">Tambah Barang Baru</h3>
+            <h3 className="font-bold text-white text-base">
+              {isEditMode ? 'Edit Barang' : 'Tambah Barang Baru'}
+            </h3>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="text-white/80 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10"
           >
@@ -252,7 +460,9 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
             className="m-4 p-3 rounded-xl text-xs font-bold text-white text-center shadow animate-in fade-in"
             style={{ background: 'var(--color-success, #4a8c5c)' }}
           >
-            ✓ Barang baru berhasil ditambahkan ke listing!
+            {isEditMode
+              ? '✓ Perubahan barang berhasil disimpan!'
+              : '✓ Barang baru berhasil ditambahkan ke listing!'}
           </div>
         )}
 
@@ -315,37 +525,68 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
             </div>
           </div>
 
-          {/* Harga (Rupiah) & Lokasi */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold text-gray-700 mb-1">
-                Harga (Rp) <span className="text-red-500">*</span>
-              </label>
-              <div className="relative flex items-center">
-                <span className="absolute left-3.5 text-xs font-bold text-gray-500">Rp</span>
-                <input
-                  type="number"
-                  value={harga}
-                  onChange={e => setHarga(e.target.value)}
-                  placeholder="350000"
-                  className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
-                  style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-700 mb-1">Lokasi Kampus / Kos</label>
+          {/* Harga (Rupiah) */}
+          <div>
+            <label className="block text-xs font-bold text-gray-700 mb-1">
+              Harga Estimasi / Jual (Rp) <span className="text-red-500">*</span>
+            </label>
+            <div className="relative flex items-center">
+              <span className="absolute left-3.5 text-xs font-bold text-gray-500">Rp</span>
               <input
                 type="text"
-                value={lokasi}
-                onChange={e => setLokasi(e.target.value)}
-                placeholder="Contoh: Sekaran, Gunungpati"
-                className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
+                inputMode="numeric"
+                value={hargaDisplay}
+                onChange={handleHargaChange}
+                placeholder="350.000"
+                className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border text-sm font-semibold outline-none transition-all focus:border-[var(--color-primary)]"
                 style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
+                required
               />
             </div>
+            {hargaDisplay && (
+              <p className="text-[11px] text-gray-500 mt-1">
+                Nilai tersimpan: <span className="font-bold text-gray-700">Rp {hargaDisplay}</span>
+              </p>
+            )}
+          </div>
+
+          {/* Lokasi Titik COD Kampus / Kos */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-bold text-gray-700">Titik COD Kampus / Kos</label>
+              <button
+                type="button"
+                onClick={handleDetectLocation}
+                disabled={isLocating}
+                className="text-[11px] font-bold text-[var(--color-primary)] hover:underline cursor-pointer disabled:opacity-50"
+              >
+                {isLocating ? 'Mendeteksi GPS...' : '📍 Gunakan Lokasi Saat Ini'}
+              </button>
+            </div>
+            <select
+              value={selectedPresetLocation}
+              onChange={e => setSelectedPresetLocation(e.target.value)}
+              className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] cursor-pointer"
+              style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
+            >
+              {CAMPUS_LOCATIONS.map(loc => (
+                <option key={loc} value={loc}>
+                  {loc}
+                </option>
+              ))}
+              <option value="CUSTOM">Lokasi Lainnya (Ketik Manual...)</option>
+            </select>
+
+            {selectedPresetLocation === 'CUSTOM' && (
+              <input
+                type="text"
+                value={customLocation}
+                onChange={e => setCustomLocation(e.target.value)}
+                placeholder="Masukkan nama kos, gedung, atau titik COD..."
+                className="mt-2 w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
+                style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
+              />
+            )}
           </div>
 
           {/* Status Jual / Barter */}
@@ -361,7 +602,7 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
                   type="button"
                   key={opt.id}
                   onClick={() => setStatus(opt.id as 'jual' | 'barter' | 'keduanya')}
-                  className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center ${
+                  className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
                     status === opt.id
                       ? 'border-[var(--color-primary)] bg-[#567257]/15 text-[var(--color-primary)]'
                       : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
@@ -501,7 +742,7 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
                     alt="Preview Foto"
                     className="w-full h-full object-cover"
                     onError={e => {
-                      (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
+                      (e.target as HTMLImageElement).src = DEFAULT_PLACEHOLDER;
                     }}
                   />
                 </div>
@@ -522,11 +763,11 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
                       : foto}
                   </p>
                 </div>
-                {foto !== '/assets/seed-images/placeholder.svg' && (
+                {foto !== DEFAULT_PLACEHOLDER && (
                   <button
                     type="button"
                     onClick={() => {
-                      setFoto('/assets/seed-images/placeholder.svg');
+                      setFoto(DEFAULT_PLACEHOLDER);
                       setUploadedFileName('');
                       if (fileInputRef.current) fileInputRef.current.value = '';
                     }}
@@ -557,17 +798,17 @@ export default function AddItemModal({ isOpen, onClose, onItemAdded }: AddItemMo
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-2.5 rounded-xl border font-bold text-xs text-gray-600 hover:bg-black/5 transition-colors"
+              className="flex-1 py-2.5 rounded-xl border font-bold text-xs text-gray-600 hover:bg-black/5 transition-colors cursor-pointer"
               style={{ borderColor: 'var(--color-border)' }}
             >
               Batal
             </button>
             <button
               type="submit"
-              className="flex-1 py-2.5 rounded-xl text-white font-bold text-xs shadow-sm transition-all hover:opacity-90 active:scale-[0.99]"
+              className="flex-1 py-2.5 rounded-xl text-white font-bold text-xs shadow-sm transition-all hover:opacity-90 active:scale-[0.99] cursor-pointer"
               style={{ background: 'var(--color-accent)' }}
             >
-              Pasang Iklan Sekarang
+              {isEditMode ? 'Simpan Perubahan' : 'Pasang Iklan Sekarang'}
             </button>
           </div>
         </form>

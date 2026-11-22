@@ -1,25 +1,63 @@
+export type UserRole = 'user' | 'admin';
+
+export type ItemCategory =
+  | 'Elektronik'
+  | 'Buku & Alat Tulis'
+  | 'Fashion'
+  | 'Perlengkapan'
+  | 'Tas';
+
+export type ItemTransactionType = 'jual' | 'barter' | 'keduanya';
+
+export type OrderStatus = 'Menunggu COD' | 'Diproses' | 'Selesai' | 'Dibatalkan';
+
+export type OrderType = 'beli' | 'barter';
+
+export interface Coordinates {
+  lat: number;
+  lng: number;
+}
+
 export interface User {
-  id: string; // format USR-001
+  id: string; // format USR-001 (admin bawaan: USR-000)
   nama: string;
   email: string;
-  password: string; // plain text
+  password: string; // plain text di mode lokal; dikosongkan/tidak dikirim server di mode API
   foto_profil: string;
   lokasi: string;
   rating: number;
-  role: 'user' | 'admin';
+  role: UserRole;
+  // Field opsional tambahan (aman terhadap kontrak PAKEM.md)
+  is_verified?: boolean;
+  titik_cod?: string;
+  koordinat?: Coordinates;
 }
 
 export interface Item {
   id: string; // format ITM-001
   nama: string;
-  kategori: string;
+  kategori: string; // 5 kategori baku: Elektronik, Buku & Alat Tulis, Fashion, Perlengkapan, Tas
   harga: number;
   kondisi: string; // format Grade A / Grade B
   foto: string;
-  status: 'jual' | 'barter' | 'keduanya';
+  status: ItemTransactionType | 'sold' | 'available';
   id_pemilik: string; // relasi ke User.id
   lokasi: string;
   deskripsi: string;
+
+  // Alias field yang disinkronkan server (WAJIB dipertahankan untuk kompatibilitas halaman)
+  title?: string;
+  nama_barang?: string;
+  id_user?: string;
+  ownerId?: string;
+  price?: number;
+  transactionType?: ItemTransactionType;
+
+  // Field opsional untuk edit barang, status terjual, & konfigurasi lokasi
+  titik_cod?: string;
+  koordinat?: Coordinates;
+  terjual?: boolean;
+  updated_at?: string;
 }
 
 export interface Offer {
@@ -30,6 +68,7 @@ export interface Offer {
   id_pengirim: string; // User.id
   id_penerima: string; // User.id
   selisih_harga: number;
+  lokasi_cod?: string;
 }
 
 export interface Conversation {
@@ -65,6 +104,22 @@ export interface CartItem {
   ditambahkan_pada: string; // format tanggal/waktu
 }
 
+export interface OrderRecord {
+  id: string; // format ORD-<timestamp>-<acak>
+  id_pembeli: string; // User.id
+  id_penjual: string; // User.id
+  id_item: string; // Item.id
+  nama_item: string;
+  foto_item?: string;
+  harga: number;
+  type: OrderType;
+  status: OrderStatus;
+  tanggal: string;
+  lokasi_cod?: string;
+  catatan?: string;
+  alasan_batal?: string;
+}
+
 export interface JualBeliDB {
   users: User[];
   items: Item[];
@@ -74,4 +129,3 @@ export interface JualBeliDB {
   notifications: Notification[];
   cart: CartItem[];
 }
-

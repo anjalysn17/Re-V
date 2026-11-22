@@ -1,35 +1,41 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getDB } from '../services/db';
+import { getDB, saveDB } from '../services/db';
 import { getOrders } from './OrdersPage';
 
 interface ProfilePageProps {
   onNavigate?: (page: string, params?: any) => void;
 }
 
+const LOKASI_COD_PRESETS = [
+  'Kampus UNNES Sekaran (Gerbang Utama / Gedung)',
+  'Sekaran, Gunungpati',
+  'Patemon, Gunungpati',
+  'Banaran, Gunungpati',
+  'Mangunsari, Gunungpati',
+  'Ngijo, Gunungpati',
+  'Pakintelan, Gunungpati',
+  'Sampangan / Gajahmungkur',
+  'Tembalang / Banyumanik',
+];
+
+const DEFAULT_LOKASI = 'Sekaran, Gunungpati';
+
 export default function ProfilePage({ onNavigate }: ProfilePageProps) {
-  const { currentUser, logout, openAuthModal } = useAuth() as any;
+  const { currentUser, logout, openAuthModal, updateCurrentUser, setCurrentUser } = useAuth() as any;
   const [isEditing, setIsEditing] = useState(false);
 
   // State form edit profil menyesuaikan akun yang sedang login
   const [nama, setNama] = useState('');
   const [noHp, setNoHp] = useState('');
-  const [lokasi, setLokasi] = useState('');
+  const [lokasiPreset, setLokasiPreset] = useState(DEFAULT_LOKASI);
+  const [lokasiCustom, setLokasiCustom] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
 
   const go = (page: string, params?: any) => {
     if (onNavigate) onNavigate(page, params);
     else if ((window as any).revNavigate) (window as any).revNavigate(page, params);
   };
-
-  // Sinkronisasi state form setiap kali currentUser berubah (login/ganti akun)
-  useEffect(() => {
-    if (currentUser) {
-      setNama(currentUser.nama || currentUser.name || '');
-      setNoHp(currentUser.no_hp || currentUser.phone || '');
-      setLokasi(currentUser.lokasi || currentUser.alamat || 'Sekitar Kampus UNNES, Gunungpati');
-    }
-  }, [currentUser]);
 
   // Tampilan jika pengguna belum login
   if (!currentUser) {
@@ -57,20 +63,49 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
     );
   }
 
-  // Hitung statistik dinamis milik akun yang sedang login
+  // Ambil data terbaru dari db.users (tersinkron dengan server saat polling)
   const db = getDB();
   const userId = currentUser.id;
+  const freshUser = (db.users || []).find((u: any) => u.id === userId);
+  const activeUser = freshUser ? { ...currentUser, ...freshUser } : currentUser;
+
+  // Sinkronisasi state form saat user berubah atau selesai polling (kecuali sedang mengedit)
+  useEffect(() => {
+    if (activeUser && !isEditing) {
+      setNama(activeUser.nama || activeUser.name || '');
+      setNoHp(activeUser.no_hp || activeUser.phone || '');
+
+      const savedLokasi = activeUser.lokasi || activeUser.alamat || DEFAULT_LOKASI;
+      if (LOKASI_COD_PRESETS.includes(savedLokasi)) {
+        setLokasiPreset(savedLokasi);
+        setLokasiCustom('');
+      } else {
+        setLokasiPreset('LAINNYA');
+        setLokasiCustom(savedLokasi);
+      }
+    }
+  }, [activeUser.id, activeUser.nama, activeUser.no_hp, activeUser.lokasi, isEditing]);
+
+  // Hitung statistik dinamis milik akun yang sedang login (cek id_pemilik sesuai kontrak PAKEM)
   const myItemsCount = (db.items || []).filter(
-    (item: any) => item.id_user === userId || item.sellerId === userId || item.ownerId === userId
+    (item: any) =>
+      item.id_pemilik === userId ||
+      item.id_user === userId ||
+      item.sellerId === userId ||
+      item.ownerId === userId
   ).length;
   const myOrdersCount = getOrders(userId).length;
-  const myCartCount = (db.cart || []).filter((c: any) => c.id_user === userId).length;
+  const myCartCount = (db.cart || []).filter(
+    (c: any) => c.id_user === userId || c.userId === userId || c.id_pembeli === userId
+  ).length;
 
-  const displayName = currentUser.nama || currentUser.name || 'Pengguna Re:V';
-  const displayEmail = currentUser.email || '-';
-  const isUnnesStudent = displayEmail.toLowerCase().includes('unnes.ac.id') || currentUser.is_verified;
+  const displayName = activeUser.nama || activeUser.name || 'Pengguna Re:V';
+  const displayEmail = activeUser.email || '-';
+  const displayLokasi = activeUser.lokasi || activeUser.alamat || DEFAULT_LOKASI;
+  const isUnnesStudent = displayEmail.toLowerCase().includes('unnes.ac.id') || Boolean(activeUser.is_verified);
   const initials = displayName
     .split(' ')
+    .filter(Boolean)
     .map((n: string) => n[0])
     .join('')
     .toUpperCase()
@@ -78,22 +113,58 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
+    const trimmedNama = nama.trim();
+    const trimmedNoHp = noHp.trim();
+    const finalLokasi =
+      lokasiPreset === 'LAINNYA'
+        ? lokasiCustom.trim() || DEFAULT_LOKASI
+        : lokasiPreset;
+
     const updatedUser = {
-      ...currentUser,
-      nama,
-      name: nama,
-      no_hp: noHp,
-      phone: noHp,
-      lokasi,
-      alamat: lokasi,
+      ...activeUser,
+      nama: trimmedNama,
+      name: trimmedNama,
+      no_hp: trimmedNoHp,
+      phone: trimmedNoHp,
+      lokasi: finalLokasi,
+      alamat: finalLokasi,
     };
 
-    // Simpan ke localStorage agar persisten saat refresh
-    localStorage.setItem('rev_current_user', JSON.stringify(updatedUser));
+    // 1. Simpan ke koleksi users di DB utama agar otomatis tersinkron ke backend via saveDB()
+    const currentDb = getDB();
+    const usersList = currentDb.users || [];
+    const existsInDb = usersList.some((u: any) => u.id === userId);
+    const updatedUsers = existsInDb
+      ? usersList.map((u: any) =>
+          u.id === userId
+            ? {
+                ...u,
+                nama: trimmedNama,
+                no_hp: trimmedNoHp,
+                lokasi: finalLokasi,
+              }
+            : u
+        )
+      : [...usersList, updatedUser];
+
+    saveDB({
+      ...currentDb,
+      users: updatedUsers,
+    });
+
+    // 2. Perbarui cache sesi aktif di localStorage & AuthContext
     localStorage.setItem('currentUser', JSON.stringify(updatedUser));
+    if (typeof updateCurrentUser === 'function') {
+      updateCurrentUser(updatedUser);
+    } else if (typeof setCurrentUser === 'function') {
+      setCurrentUser(updatedUser);
+    }
+
+    // 3. Beri sinyal pembaruan ke komponen lain (Header, dsb.)
+    window.dispatchEvent(new Event('rev-db-updated'));
 
     setIsEditing(false);
-    setSaveMessage('Profil berhasil diperbarui.');
+    setSaveMessage('Profil dan lokasi COD berhasil diperbarui.');
     setTimeout(() => setSaveMessage(''), 3000);
   };
 
@@ -109,9 +180,9 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-4">
-            {currentUser.foto_profil || currentUser.avatar ? (
+            {activeUser.foto_profil || activeUser.avatar ? (
               <img
-                src={currentUser.foto_profil || currentUser.avatar}
+                src={activeUser.foto_profil || activeUser.avatar}
                 alt={displayName}
                 className="w-16 h-16 rounded-full object-cover border border-gray-200"
               />
@@ -134,11 +205,11 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
                 )}
               </div>
               <p className="text-xs text-gray-500 mt-0.5">{displayEmail}</p>
-              {currentUser.nim && (
-                <p className="text-xs text-gray-500 mt-0.5">NIM: {currentUser.nim}</p>
+              {activeUser.nim && (
+                <p className="text-xs text-gray-500 mt-0.5">NIM: {activeUser.nim}</p>
               )}
               <p className="text-xs text-gray-600 mt-1.5 flex items-center gap-1">
-                <span>📍</span> {lokasi}
+                <span>📍</span> {displayLokasi}
               </p>
             </div>
           </div>
@@ -164,6 +235,7 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
                 className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 focus:outline-none focus:border-emerald-600"
               />
             </div>
+
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1">Nomor WhatsApp / HP</label>
               <input
@@ -174,16 +246,39 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
                 className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 focus:outline-none focus:border-emerald-600"
               />
             </div>
+
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1">Area Kos / Lokasi COD</label>
-              <input
-                type="text"
-                value={lokasi}
-                onChange={(e) => setLokasi(e.target.value)}
-                placeholder="Contoh: Sekaran / Patemon, Gunungpati"
-                className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 focus:outline-none focus:border-emerald-600"
-              />
+              <label className="block text-xs font-semibold text-gray-700 mb-1">
+                Area Kos / Titik Lokasi COD Utama
+              </label>
+              <select
+                value={lokasiPreset}
+                onChange={(e) => setLokasiPreset(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-emerald-600"
+              >
+                {LOKASI_COD_PRESETS.map((area) => (
+                  <option key={area} value={area}>
+                    {area}
+                  </option>
+                ))}
+                <option value="LAINNYA">Lainnya (Tulis lokasi manual)</option>
+              </select>
+
+              {lokasiPreset === 'LAINNYA' && (
+                <input
+                  type="text"
+                  value={lokasiCustom}
+                  onChange={(e) => setLokasiCustom(e.target.value)}
+                  placeholder="Contoh: Kos Melati, Gang Kelinci Sekaran"
+                  required
+                  className="mt-2 w-full px-3 py-2 text-sm rounded-xl border border-gray-200 focus:outline-none focus:border-emerald-600"
+                />
+              )}
+              <p className="text-[11px] text-gray-400 mt-1">
+                Lokasi ini akan ditampilkan sebagai area COD default saat kamu mengunggah barang.
+              </p>
             </div>
+
             <button
               type="submit"
               className="px-4 py-2 rounded-xl text-xs font-bold text-white"
@@ -230,7 +325,7 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
         >
           <div>
             <p className="text-sm font-semibold text-gray-800">Kelola Barang Saya</p>
-            <p className="text-xs text-gray-500">Lihat atau hapus barang yang kamu pasang untuk jual/barter</p>
+            <p className="text-xs text-gray-500">Edit, tandai terjual, atau hapus barang jual/barter</p>
           </div>
           <span className="text-gray-400">›</span>
         </button>
@@ -246,7 +341,7 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
           <span className="text-gray-400">›</span>
         </button>
 
-        {currentUser.role === 'admin' && (
+        {activeUser.role === 'admin' && (
           <button
             onClick={() => go('admin')}
             className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-gray-50"

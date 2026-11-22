@@ -42,6 +42,10 @@ export function addOrderTransaction(
   const existing = getOrders();
   const newOrder: OrderRecord = {
     ...orderInput,
+    price:
+      orderInput.price !== undefined
+        ? Number(String(orderInput.price).replace(/\D/g, '')) || 0
+        : undefined,
     id: `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     status: orderInput.status || 'Menunggu COD',
     createdAt: new Date().toISOString(),
@@ -65,10 +69,12 @@ interface OrdersPageProps {
   onNavigate?: (page: string, params?: any) => void;
 }
 
+type FilterTab = 'all' | 'beli' | 'barter' | 'dibatalkan';
+
 export default function OrdersPage({ onNavigate }: OrdersPageProps) {
   const { currentUser, openAuthModal } = useAuth() as any;
   const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [filterType, setFilterType] = useState<'all' | 'beli' | 'barter'>('all');
+  const [filterType, setFilterType] = useState<FilterTab>('all');
 
   const go = (page: string, params?: any) => {
     if (onNavigate) onNavigate(page, params);
@@ -86,22 +92,32 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
   useEffect(() => {
     loadUserOrders();
 
-    // Dengarkan perubahan transaksi baru secara real-time
+    // Dengarkan perubahan transaksi lokal maupun hasil sinkronisasi server
     window.addEventListener('rev-orders-updated', loadUserOrders);
+    window.addEventListener('rev-db-updated', loadUserOrders);
     window.addEventListener('storage', loadUserOrders);
     return () => {
       window.removeEventListener('rev-orders-updated', loadUserOrders);
+      window.removeEventListener('rev-db-updated', loadUserOrders);
       window.removeEventListener('storage', loadUserOrders);
     };
   }, [currentUser]);
 
   const handleUpdateStatus = (orderId: string, newStatus: OrderRecord['status']) => {
+    if (
+      newStatus === 'Dibatalkan' &&
+      !window.confirm('Apakah kamu yakin ingin membatalkan transaksi ini?')
+    ) {
+      return;
+    }
+
     const allOrders = getOrders();
     const updated = allOrders.map((o) =>
       o.id === orderId ? { ...o, status: newStatus } : o
     );
     localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(updated));
     notifyLocalChange();
+    window.dispatchEvent(new Event('rev-orders-updated'));
     loadUserOrders();
   };
 
@@ -125,9 +141,21 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
     );
   }
 
-  const filteredOrders = orders.filter((o) =>
-    filterType === 'all' ? true : o.type === filterType
-  );
+  const cancelledCount = orders.filter((o) => o.status === 'Dibatalkan').length;
+
+  const filteredOrders = orders.filter((o) => {
+    if (filterType === 'dibatalkan') return o.status === 'Dibatalkan';
+    if (filterType === 'beli') return o.type === 'beli';
+    if (filterType === 'barter') return o.type === 'barter';
+    return true;
+  });
+
+  const tabs: { id: FilterTab; label: string; count?: number }[] = [
+    { id: 'all', label: 'Semua' },
+    { id: 'beli', label: 'Pembelian' },
+    { id: 'barter', label: 'Barter' },
+    { id: 'dibatalkan', label: 'Dibatalkan', count: cancelledCount },
+  ];
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
@@ -139,23 +167,32 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
           </p>
         </div>
 
-        {/* Filter Tipe Transaksi */}
-        <div className="flex gap-1.5 bg-gray-100 p-1 rounded-xl self-start">
-          {[
-            { id: 'all', label: 'Semua' },
-            { id: 'beli', label: 'Pembelian' },
-            { id: 'barter', label: 'Barter' },
-          ].map((tab) => (
+        {/* Filter Tipe & Status Transaksi */}
+        <div className="flex gap-1.5 bg-gray-100 p-1 rounded-xl self-start overflow-x-auto max-w-full">
+          {tabs.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setFilterType(tab.id as any)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+              onClick={() => setFilterType(tab.id)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap flex items-center gap-1.5 ${
                 filterType === tab.id
-                  ? 'bg-white text-gray-900 shadow-sm'
+                  ? tab.id === 'dibatalkan'
+                    ? 'bg-white text-red-600 shadow-sm'
+                    : 'bg-white text-gray-900 shadow-sm'
                   : 'text-gray-500 hover:text-gray-700'
               }`}
             >
-              {tab.label}
+              <span>{tab.label}</span>
+              {typeof tab.count === 'number' && tab.count > 0 && (
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                    filterType === tab.id
+                      ? 'bg-red-50 text-red-600'
+                      : 'bg-gray-200 text-gray-600'
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -166,117 +203,147 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
         <div className="bg-white rounded-2xl p-10 text-center border border-gray-100 shadow-sm">
           <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
             <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.8}
+                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+              />
             </svg>
           </div>
-          <h3 className="text-base font-bold text-gray-800">Belum Ada Transaksi</h3>
+          <h3 className="text-base font-bold text-gray-800">
+            {filterType === 'dibatalkan'
+              ? 'Tidak Ada Transaksi Dibatalkan'
+              : 'Belum Ada Transaksi'}
+          </h3>
           <p className="text-xs text-gray-500 max-w-sm mx-auto mt-1 mb-5">
-            Daftar transaksimu masih kosong. Setiap kali kamu membeli barang atau menyepakati barter, riwayatnya akan otomatis muncul di sini.
+            {filterType === 'dibatalkan'
+              ? 'Riwayat pesanan pembelian atau barter yang dibatalkan akan tampil di tab ini.'
+              : 'Daftar transaksimu masih kosong. Setiap kali kamu membeli barang atau menyepakati barter, riwayatnya akan otomatis muncul di sini.'}
           </p>
-          <div className="flex justify-center gap-3">
-            <button
-              onClick={() => go('home')}
-              className="px-4 py-2.5 rounded-xl text-xs font-bold text-white"
-              style={{ background: 'var(--color-primary, #567257)' }}
-            >
-              Cari Barang
-            </button>
-            <button
-              onClick={() => go('barter')}
-              className="px-4 py-2.5 rounded-xl text-xs font-bold border border-gray-200 text-gray-700 hover:bg-gray-50"
-            >
-              Coba Smart Barter
-            </button>
-          </div>
+          {filterType !== 'dibatalkan' && (
+            <div className="flex justify-center gap-3">
+              <button
+                onClick={() => go('home')}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-white"
+                style={{ background: 'var(--color-primary, #567257)' }}
+              >
+                Cari Barang
+              </button>
+              <button
+                onClick={() => go('barter')}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold border border-gray-200 text-gray-700 hover:bg-gray-50"
+              >
+                Coba Smart Barter
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         /* Daftar Transaksi */
         <div className="space-y-3">
-          {filteredOrders.map((order) => (
-            <div
-              key={order.id}
-              className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100 shadow-sm space-y-3"
-            >
-              <div className="flex items-center justify-between text-xs border-b border-gray-100 pb-2.5">
-                <div className="flex items-center gap-2">
+          {filteredOrders.map((order) => {
+            const isCancelled = order.status === 'Dibatalkan';
+            const isActive =
+              order.status === 'Menunggu COD' || order.status === 'Diproses';
+
+            return (
+              <div
+                key={order.id}
+                className={`bg-white rounded-2xl p-4 sm:p-5 border shadow-sm space-y-3 transition-opacity ${
+                  isCancelled ? 'border-red-100/80 opacity-90' : 'border-gray-100'
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs border-b border-gray-100 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full font-bold uppercase text-[10px] ${
+                        order.type === 'barter'
+                          ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                          : 'bg-blue-50 text-blue-700 border border-blue-200'
+                      }`}
+                    >
+                      {order.type === 'barter' ? 'Barter' : 'Pembelian'}
+                    </span>
+                    <span className="text-gray-400">#{order.id}</span>
+                  </div>
+
                   <span
-                    className={`px-2.5 py-0.5 rounded-full font-bold uppercase text-[10px] ${
-                      order.type === 'barter'
-                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                        : 'bg-blue-50 text-blue-700 border border-blue-200'
+                    className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                      order.status === 'Selesai'
+                        ? 'bg-emerald-50 text-emerald-700'
+                        : isCancelled
+                        ? 'bg-red-50 text-red-600'
+                        : 'bg-yellow-50 text-yellow-700'
                     }`}
                   >
-                    {order.type === 'barter' ? 'Barter' : 'Pembelian'}
+                    {order.status}
                   </span>
-                  <span className="text-gray-400">#{order.id}</span>
                 </div>
 
-                <span
-                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                    order.status === 'Selesai'
-                      ? 'bg-emerald-50 text-emerald-700'
-                      : order.status === 'Dibatalkan'
-                      ? 'bg-red-50 text-red-600'
-                      : 'bg-yellow-50 text-yellow-700'
-                  }`}
-                >
-                  {order.status}
-                </span>
-              </div>
+                <div className="flex gap-3.5 items-center">
+                  <img
+                    src={order.itemImage || '/assets/seed-images/placeholder.svg'}
+                    alt={order.itemTitle}
+                    className={`w-16 h-16 rounded-xl object-cover bg-gray-100 border border-gray-200 shrink-0 ${
+                      isCancelled ? 'grayscale-[40%]' : ''
+                    }`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-bold text-gray-900 truncate">
+                      {order.itemTitle}
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Mitra: {order.sellerName}
+                    </p>
+                    {order.type === 'barter' ? (
+                      <p className="text-xs font-medium text-amber-700 mt-1">
+                        Ditukar dengan: {order.barterOfferTitle || 'Barang penawaran'}
+                      </p>
+                    ) : (
+                      <p className="text-sm font-bold text-gray-900 mt-1">
+                        Rp {Number(order.price || 0).toLocaleString('id-ID')}
+                      </p>
+                    )}
+                    {order.codLocation && (
+                      <p className="text-[11px] text-gray-500 mt-1 flex items-center gap-1">
+                        <span>📍</span>
+                        <span>Titik COD: {order.codLocation}</span>
+                      </p>
+                    )}
+                  </div>
+                </div>
 
-              <div className="flex gap-3.5 items-center">
-                <img
-                  src={order.itemImage || '/assets/seed-images/placeholder.svg'}
-                  alt={order.itemTitle}
-                  className="w-16 h-16 rounded-xl object-cover bg-gray-100 border border-gray-200 shrink-0"
-                />
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-bold text-gray-900 truncate">{order.itemTitle}</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Mitra: {order.sellerName}</p>
-                  {order.type === 'barter' ? (
-                    <p className="text-xs font-medium text-amber-700 mt-1">
-                      Ditukar dengan: {order.barterOfferTitle || 'Barang penawaran'}
-                    </p>
-                  ) : (
-                    <p className="text-sm font-bold text-gray-900 mt-1">
-                      Rp {(order.price || 0).toLocaleString('id-ID')}
-                    </p>
-                  )}
-                  {order.codLocation && (
-                    <p className="text-[11px] text-gray-400 mt-0.5">Titik COD: {order.codLocation}</p>
+                {/* Aksi Transaksi */}
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-50">
+                  <button
+                    onClick={() => go('chat')}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50"
+                  >
+                    Hubungi Mitra
+                  </button>
+
+                  {isActive && (
+                    <>
+                      <button
+                        onClick={() => handleUpdateStatus(order.id, 'Dibatalkan')}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 hover:bg-red-50"
+                      >
+                        Batalkan
+                      </button>
+                      <button
+                        onClick={() => handleUpdateStatus(order.id, 'Selesai')}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold text-white"
+                        style={{ background: 'var(--color-primary, #567257)' }}
+                      >
+                        Selesaikan COD
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
-
-              {/* Aksi Transaksi */}
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-50">
-                <button
-                  onClick={() => go('chat')}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50"
-                >
-                  Hubungi Mitra
-                </button>
-
-                {order.status === 'Menunggu COD' && (
-                  <>
-                    <button
-                      onClick={() => handleUpdateStatus(order.id, 'Dibatalkan')}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 hover:bg-red-50"
-                    >
-                      Batalkan
-                    </button>
-                    <button
-                      onClick={() => handleUpdateStatus(order.id, 'Selesai')}
-                      className="px-3 py-1.5 rounded-lg text-xs font-bold text-white"
-                      style={{ background: 'var(--color-primary, #567257)' }}
-                    >
-                      Selesaikan COD
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

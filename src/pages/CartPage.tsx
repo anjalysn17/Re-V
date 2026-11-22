@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import * as dbService from '../services/db';
 import { addOrderTransaction } from './OrdersPage';
@@ -16,13 +16,15 @@ interface ResolvedCartItem {
   quantity: number;
   image: string;
   category: string;
+  lokasi: string;
+  isSold: boolean;
   sellerId?: string;
   sellerName: string;
   type: 'beli' | 'barter';
   barterOfferTitle?: string;
 }
 
-const SAFE_COD_SPOTS = [
+const DEFAULT_COD_SPOTS = [
   'Gerbang Utama UNNES Sekaran',
   'Lobi Dekanat FMIPA UNNES',
   'Perpustakaan Pusat UNNES',
@@ -30,38 +32,47 @@ const SAFE_COD_SPOTS = [
   'Area Kos Patemon (Sesuai Kesepakatan Chat)',
 ];
 
-// Helper untuk menyimpan perubahan keranjang ke db.ts / localStorage secara dinamis
+// Sanitasi harga agar string berformat titik/koma (mis. "150.000") tidak terpotong menjadi 150
+function parseSafePrice(raw: unknown): number {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0;
+  if (typeof raw === 'string') {
+    const digitsOnly = raw.replace(/[^\d]/g, '');
+    return digitsOnly ? Number(digitsOnly) : 0;
+  }
+  return 0;
+}
+
+// Ambil konfigurasi lokasi aktif web/pengguna jika sudah diatur di profil atau header
+function getConfiguredWebLocation(currentUser: any): string {
+  try {
+    const savedLoc = localStorage.getItem('rev_selected_location');
+    if (savedLoc && savedLoc.trim() && savedLoc !== 'Semua Lokasi') {
+      return savedLoc.trim();
+    }
+  } catch {
+    // Abaikan jika localStorage tidak tersedia
+  }
+  return currentUser?.lokasi?.trim() || '';
+}
+
+// Simpan perubahan keranjang melalui saveDB() agar otomatis sinkron ke server saat API_ENABLED
 function persistCartChanges(updatedCartArray: any[]) {
   const db = dbService.getDB() as any;
   const updatedDB = { ...db, cart: updatedCartArray };
 
-  if (typeof (dbService as any).saveDB === 'function') {
-    (dbService as any).saveDB(updatedDB);
+  if (typeof dbService.saveDB === 'function') {
+    dbService.saveDB(updatedDB);
     return;
   }
 
-  // Fallback: cari key database di localStorage yang menyimpan array 'items' dan 'cart'
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (!key) continue;
-    try {
-      const parsed = JSON.parse(localStorage.getItem(key) || '');
-      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.items)) {
-        localStorage.setItem(key, JSON.stringify({ ...parsed, cart: updatedCartArray }));
-        return;
-      }
-    } catch {
-      // Abaikan key non-JSON
-    }
-  }
-
-  localStorage.setItem('rev_db', JSON.stringify(updatedDB));
+  // Fallback menggunakan key kontrak PAKEM ('jualbeliDB')
+  localStorage.setItem('jualbeliDB', JSON.stringify(updatedDB));
 }
 
 export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
   const { currentUser, openAuthModal } = useAuth() as any;
   const [cartItems, setCartItems] = useState<ResolvedCartItem[]>([]);
-  const [selectedCodSpot, setSelectedCodSpot] = useState<string>(SAFE_COD_SPOTS[0]);
+  const [selectedCodSpot, setSelectedCodSpot] = useState<string>(DEFAULT_COD_SPOTS[0]);
   const [buyerNote, setBuyerNote] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
@@ -84,17 +95,36 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
       const targetItemId = String(entry.id_item ?? entry.itemId ?? entry.productId ?? '');
       const product = allItems.find((it) => String(it.id) === targetItemId) || entry;
 
-      const sellerId = product.id_user ?? product.sellerId ?? product.ownerId;
+      // Pertahankan pembacaan field asli (PAKEM A.5) maupun alias server
+      const sellerId =
+        product.id_pemilik ?? product.id_user ?? product.sellerId ?? product.ownerId;
       const sellerObj = allUsers.find((u) => String(u.id) === String(sellerId));
+
+      const itemLocation =
+        product.lokasi ||
+        product.location ||
+        sellerObj?.lokasi ||
+        'Area Kampus UNNES Sekaran';
+
+      const isSold =
+        product.status === 'sold' ||
+        product.terjual === true ||
+        product.isSold === true;
 
       return {
         cartId: String(entry.id ?? `${targetItemId}-${idx}`),
         itemId: targetItemId,
-        title: product.title || product.nama_barang || 'Barang Bekas Mahasiswa',
-        price: Number(product.price ?? product.harga ?? 0),
-        quantity: Number(entry.quantity ?? entry.qty ?? 1),
-        image: product.image || product.foto || '/assets/seed-images/placeholder.svg',
-        category: product.category || product.kategori || 'Umum',
+        title:
+          product.nama ||
+          product.title ||
+          product.nama_barang ||
+          'Barang Bekas Mahasiswa',
+        price: parseSafePrice(product.harga ?? product.price ?? 0),
+        quantity: Math.max(1, Number(entry.quantity ?? entry.qty ?? 1)),
+        image: product.foto || product.image || '/assets/seed-images/placeholder.svg',
+        category: product.kategori || product.category || 'Umum',
+        lokasi: itemLocation,
+        isSold,
         sellerId: sellerId ? String(sellerId) : undefined,
         sellerName:
           sellerObj?.nama ||
@@ -112,7 +142,42 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
 
   useEffect(() => {
     loadCart();
+
+    // Dengarkan pembaruan dari polling/sinkronisasi server
+    const handleDbUpdated = () => loadCart();
+    window.addEventListener('rev-db-updated', handleDbUpdated);
+    return () => window.removeEventListener('rev-db-updated', handleDbUpdated);
   }, [currentUser]);
+
+  // Gabungkan titik COD bawaan dengan lokasi barang di keranjang & konfigurasi lokasi web
+  const availableCodSpots = useMemo(() => {
+    const spots: string[] = [];
+    const webLoc = getConfiguredWebLocation(currentUser);
+
+    if (webLoc) {
+      spots.push(`Area Pilihanmu: ${webLoc}`);
+    }
+
+    cartItems.forEach((item) => {
+      if (item.lokasi && item.lokasi !== 'Area Kampus UNNES Sekaran') {
+        const label = `Lokasi Barang (${item.lokasi})`;
+        if (!spots.includes(label)) spots.push(label);
+      }
+    });
+
+    DEFAULT_COD_SPOTS.forEach((spot) => {
+      if (!spots.includes(spot)) spots.push(spot);
+    });
+
+    return spots;
+  }, [cartItems, currentUser]);
+
+  // Sesuaikan pilihan default titik COD bila daftar spot berubah dan pilihan lama tidak ada
+  useEffect(() => {
+    if (availableCodSpots.length > 0 && !availableCodSpots.includes(selectedCodSpot)) {
+      setSelectedCodSpot(availableCodSpots[0]);
+    }
+  }, [availableCodSpots, selectedCodSpot]);
 
   const handleUpdateQty = (cartId: string, itemId: string, delta: number) => {
     if (!currentUser) return;
@@ -160,7 +225,6 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
     if (onCartUpdated) onCartUpdated();
   };
 
-  // Fungsi utama Checkout yang mencatat pesanan ke OrdersPage & mengosongkan keranjang
   const handleCheckout = () => {
     if (!currentUser) {
       openAuthModal('login');
@@ -168,6 +232,13 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
     }
 
     if (cartItems.length === 0 || isProcessing) return;
+
+    const hasSoldItems = cartItems.some((item) => item.isSold);
+    if (hasSoldItems) {
+      alert('Ada barang di keranjang yang sudah terjual. Hapus barang tersebut terlebih dahulu sebelum checkout.');
+      return;
+    }
+
     setIsProcessing(true);
 
     try {
@@ -175,7 +246,7 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
         ? `${selectedCodSpot} (Catatan: ${buyerNote.trim()})`
         : selectedCodSpot;
 
-      // 1. Tambahkan setiap item keranjang ke riwayat transaksi (OrdersPage)
+      // 1. Catat setiap item keranjang ke riwayat transaksi (OrdersPage)
       cartItems.forEach((item) => {
         addOrderTransaction({
           userId: String(currentUser.id),
@@ -197,7 +268,7 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
       );
       persistCartChanges(otherUsersCart);
 
-      // 3. Perbarui UI & pindah ke halaman OrdersPage
+      // 3. Perbarui tampilan & arahkan ke halaman Transaksi Saya
       setCartItems([]);
       if (onCartUpdated) onCartUpdated();
       alert('Transaksi berhasil dibuat! Silakan koordinasikan jadwal COD dengan penjual.');
@@ -207,7 +278,6 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
     }
   };
 
-  // Tampilan jika pengguna belum login
   if (!currentUser) {
     return (
       <div className="max-w-md mx-auto px-4 py-16 text-center">
@@ -230,13 +300,14 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
 
   const totalPrice = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const totalCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+  const hasSoldItems = cartItems.some((item) => item.isSold);
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
       <div className="mb-5">
         <h1 className="text-xl font-bold text-gray-900">Keranjang Saya</h1>
         <p className="text-xs text-gray-500">
-          Periksa kembali daftar barang sebelum menyepakati titik COD di sekitar kampus
+          Periksa kembali daftar barang dan titik lokasi COD di sekitar kampus sebelum checkout
         </p>
       </div>
 
@@ -271,7 +342,9 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
             {cartItems.map((item) => (
               <div
                 key={item.cartId}
-                className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex gap-3.5 items-center"
+                className={`bg-white rounded-2xl p-4 border shadow-sm flex gap-3.5 items-center ${
+                  item.isSold ? 'border-red-200 bg-red-50/30' : 'border-gray-100'
+                }`}
               >
                 <img
                   src={item.image}
@@ -282,12 +355,19 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-2">
-                    <h3
-                      onClick={() => onNavigate('product', item.itemId)}
-                      className="text-sm font-bold text-gray-900 truncate cursor-pointer hover:underline"
-                    >
-                      {item.title}
-                    </h3>
+                    <div className="min-w-0">
+                      <h3
+                        onClick={() => onNavigate('product', item.itemId)}
+                        className="text-sm font-bold text-gray-900 truncate cursor-pointer hover:underline"
+                      >
+                        {item.title}
+                      </h3>
+                      {item.isSold && (
+                        <span className="inline-block mt-0.5 px-2 py-0.5 text-[10px] font-bold rounded bg-red-100 text-red-700">
+                          Sudah Terjual
+                        </span>
+                      )}
+                    </div>
                     <button
                       onClick={() => handleRemoveItem(item.cartId, item.itemId)}
                       title="Hapus dari keranjang"
@@ -300,54 +380,59 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                   <p className="text-xs text-gray-500 mt-0.5">
                     Penjual: {item.sellerName} • {item.category}
                   </p>
+                  <p className="text-[11px] text-emerald-700 font-medium mt-0.5">
+                    Lokasi: {item.lokasi}
+                  </p>
 
-                  <div className="flex items-center justify-between mt-3">
-                    <p className="text-sm font-bold text-gray-900">
+                  <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
+                    <p className="text-sm font-bold text-gray-900 whitespace-nowrap">
                       {item.type === 'barter'
                         ? 'Tukar Barang (Barter)'
                         : `Rp ${(item.price * item.quantity).toLocaleString('id-ID')}`}
                     </p>
 
                     {/* Kontrol Jumlah Barang */}
-                    <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1">
-                      <button
-                        onClick={() => handleUpdateQty(item.cartId, item.itemId, -1)}
-                        className="w-6 h-6 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-200 rounded"
-                      >
-                        -
-                      </button>
-                      <span className="text-xs font-bold text-gray-800 w-5 text-center">
-                        {item.quantity}
-                      </span>
-                      <button
-                        onClick={() => handleUpdateQty(item.cartId, item.itemId, 1)}
-                        className="w-6 h-6 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-200 rounded"
-                      >
-                        +
-                      </button>
-                    </div>
+                    {!item.isSold && (
+                      <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1">
+                        <button
+                          onClick={() => handleUpdateQty(item.cartId, item.itemId, -1)}
+                          className="w-6 h-6 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-200 rounded"
+                        >
+                          -
+                        </button>
+                        <span className="text-xs font-bold text-gray-800 w-5 text-center">
+                          {item.quantity}
+                        </span>
+                        <button
+                          onClick={() => handleUpdateQty(item.cartId, item.itemId, 1)}
+                          className="w-6 h-6 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-200 rounded"
+                        >
+                          +
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
             ))}
           </div>
 
-          {/* Kolom Kanan: Pengaturan COD & Ringkasan Checkout */}
+          {/* Kolom Kanan: Pengaturan Lokasi COD & Ringkasan Checkout */}
           <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm h-fit space-y-4">
             <h2 className="text-sm font-bold text-gray-900 border-b border-gray-100 pb-3">
-              Ringkasan & Titik COD
+              Ringkasan & Titik Lokasi COD
             </h2>
 
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-                Rekomendasi Titik Temu Aman (COD)
+                Titik Temu COD (Berdasarkan Lokasi Barang & Kampus)
               </label>
               <select
                 value={selectedCodSpot}
                 onChange={(e) => setSelectedCodSpot(e.target.value)}
                 className="w-full px-3 py-2.5 text-xs rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-emerald-600"
               >
-                {SAFE_COD_SPOTS.map((spot) => (
+                {availableCodSpots.map((spot) => (
                   <option key={spot} value={spot}>
                     {spot}
                   </option>
@@ -357,13 +442,13 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
 
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-                Catatan Waktu / Lokasi (Opsional)
+                Catatan Waktu / Detail Lokasi (Opsional)
               </label>
               <input
                 type="text"
                 value={buyerNote}
                 onChange={(e) => setBuyerNote(e.target.value)}
-                placeholder="Misal: Ketemu jam 4 sore setelah kelas"
+                placeholder="Misal: Ketemu jam 4 sore depan lobi"
                 className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 focus:outline-none focus:border-emerald-600"
               />
             </div>
@@ -379,13 +464,21 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
               </div>
               <div className="flex justify-between text-sm font-bold text-gray-900 pt-2 border-t border-gray-100">
                 <span>Total Pembayaran COD</span>
-                <span>Rp {totalPrice.toLocaleString('id-ID')}</span>
+                <span className="whitespace-nowrap">
+                  Rp {totalPrice.toLocaleString('id-ID')}
+                </span>
               </div>
             </div>
 
+            {hasSoldItems && (
+              <p className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-xl p-2.5">
+                Hapus barang berstatus <strong>Sudah Terjual</strong> terlebih dahulu sebelum melanjutkan checkout.
+              </p>
+            )}
+
             <button
               onClick={handleCheckout}
-              disabled={isProcessing}
+              disabled={isProcessing || hasSoldItems}
               className="w-full py-3 rounded-xl text-xs font-bold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
               style={{ background: 'var(--color-primary, #567257)' }}
             >
