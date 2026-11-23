@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import * as dbService from '../services/db';
 import { addOrderTransaction } from './OrdersPage';
+import OsmMapEmbed from '../components/OsmMapEmbed';
 
 interface CartPageProps {
   onNavigate: (page: string, params?: any) => void;
@@ -17,6 +18,7 @@ interface ResolvedCartItem {
   image: string;
   category: string;
   lokasi: string;
+  koordinat?: { lat: number; lng: number };
   isSold: boolean;
   sellerId?: string;
   sellerName: string;
@@ -124,6 +126,7 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
         image: product.foto || product.image || '/assets/seed-images/placeholder.svg',
         category: product.kategori || product.category || 'Umum',
         lokasi: itemLocation,
+        koordinat: product.koordinat ?? sellerObj?.koordinat,
         isSold,
         sellerId: sellerId ? String(sellerId) : undefined,
         sellerName:
@@ -178,6 +181,20 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
       setSelectedCodSpot(availableCodSpots[0]);
     }
   }, [availableCodSpots, selectedCodSpot]);
+
+  // Ambil koordinat khusus jika titik yang dipilih berasal dari barang yang punya koordinat GPS
+  const activeMapCoords = useMemo(() => {
+    if (selectedCodSpot.startsWith('Lokasi Barang (')) {
+      const matchedItem = cartItems.find(
+        (it) => `Lokasi Barang (${it.lokasi})` === selectedCodSpot && it.koordinat
+      );
+      return matchedItem?.koordinat ?? null;
+    }
+    if (selectedCodSpot.startsWith('Area Pilihanmu:')) {
+      return currentUser?.koordinat ?? null;
+    }
+    return null;
+  }, [selectedCodSpot, cartItems, currentUser]);
 
   const handleUpdateQty = (cartId: string, itemId: string, delta: number) => {
     if (!currentUser) return;
@@ -439,6 +456,13 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                 ))}
               </select>
             </div>
+
+            {/* Pratinjau OpenStreetMap Embed untuk Titik COD */}
+            <OsmMapEmbed
+              locationName={selectedCodSpot}
+              coordinates={activeMapCoords}
+              height={165}
+            />
 
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1.5">

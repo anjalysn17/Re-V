@@ -2,6 +2,10 @@ import { useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import * as dbService from '../services/db';
 import { addOrderTransaction } from './OrdersPage';
+import OsmMapEmbed, {
+  MapCoordinates,
+  resolveLocationCoordinates,
+} from '../components/OsmMapEmbed';
 
 interface ProductDetailProps {
   productId?: string;
@@ -74,6 +78,7 @@ export default function ProductDetail({
   const { currentUser, openAuthModal } = useAuth() as any;
 
   const [selectedCodSpot, setSelectedCodSpot] = useState<string>(SAFE_COD_SPOTS[0]);
+  const [showCodMapPreview, setShowCodMapPreview] = useState<boolean>(true);
   const [isBarterModalOpen, setIsBarterModalOpen] = useState<boolean>(false);
   const [selectedOfferItemId, setSelectedOfferItemId] = useState<string>('');
   const [barterNote, setBarterNote] = useState<string>('');
@@ -85,6 +90,8 @@ export default function ProductDetail({
   const [editCategory, setEditCategory] = useState<string>(ITEM_CATEGORIES[0]);
   const [editCondition, setEditCondition] = useState<string>(ITEM_CONDITIONS[2]);
   const [editLocation, setEditLocation] = useState<string>(CAMPUS_LOCATIONS[0]);
+  const [editCoordinates, setEditCoordinates] = useState<MapCoordinates | null>(null);
+  const [isLocatingGps, setIsLocatingGps] = useState<boolean>(false);
   const [editTransactionType, setEditTransactionType] = useState<'jual' | 'barter' | 'keduanya'>('jual');
   const [editPriceInput, setEditPriceInput] = useState<string>('');
   const [editWantedItem, setEditWantedItem] = useState<string>('');
@@ -172,6 +179,7 @@ export default function ProductDetail({
     category: rawItem.kategori || rawItem.category || 'Perlengkapan',
     condition: rawItem.kondisi || rawItem.condition || 'Bekas - Sangat Baik',
     location: rawItem.lokasi || rawItem.location || 'Sekaran (Gerbang Utama UNNES)',
+    coordinates: (rawItem.koordinat || rawItem.coordinates || null) as MapCoordinates | null,
     image: rawItem.foto || rawItem.image || '/assets/seed-images/placeholder.svg',
     ownerId: rawItem.id_pemilik ?? rawItem.id_user ?? rawItem.sellerId ?? rawItem.ownerId ?? 'USR-001',
     transactionMode: normalizedMode,
@@ -205,6 +213,7 @@ export default function ProductDetail({
     );
     setEditCondition(item.condition);
     setEditLocation(item.location);
+    setEditCoordinates(item.coordinates);
 
     const initialOfferType: 'jual' | 'barter' | 'keduanya' = isBothMode
       ? 'keduanya'
@@ -217,6 +226,30 @@ export default function ProductDetail({
     setEditDescription(item.description);
     setEditIsSold(isSold);
     setIsEditModalOpen(true);
+  };
+
+  // Ambil koordinat GPS browser untuk titik lokasi barang
+  const handleUseCurrentGps = () => {
+    if (!navigator.geolocation) {
+      alert('Browser kamu tidak mendukung fitur GPS / Geolocation.');
+      return;
+    }
+    setIsLocatingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setEditCoordinates({
+          lat: Number(pos.coords.latitude.toFixed(6)),
+          lng: Number(pos.coords.longitude.toFixed(6)),
+        });
+        setIsLocatingGps(false);
+        showToast('Titik koordinat GPS berhasil diterapkan!');
+      },
+      () => {
+        setIsLocatingGps(false);
+        alert('Gagal mengakses lokasi GPS. Pastikan izin lokasi browser sudah diaktifkan.');
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
   };
 
   // Simpan perubahan barang (memperbarui field asli PAKEM.md & seluruh alias server)
@@ -233,6 +266,8 @@ export default function ProductDetail({
       return;
     }
 
+    const finalCoordinates = resolveLocationCoordinates(editLocation, editCoordinates);
+
     const latestDB = dbService.getDB() as any;
     const updatedItems = (latestDB.items || []).map((it: any) => {
       if (String(it.id) !== String(item.id)) return it;
@@ -247,6 +282,7 @@ export default function ProductDetail({
         kategori: editCategory,
         kondisi: editCondition,
         lokasi: editLocation,
+        koordinat: finalCoordinates,
         status: nextStatus,
         terjual: editIsSold,
         barang_dicari: editWantedItem.trim(),
@@ -561,9 +597,18 @@ export default function ProductDetail({
               </p>
             )}
 
-            <p className="text-xs text-gray-600 flex items-center gap-1.5">
-              <span>📍</span> Lokasi Barang: <strong>{item.location}</strong>
-            </p>
+            <div className="space-y-2">
+              <p className="text-xs text-gray-600 flex items-center gap-1.5">
+                <span>📍</span> Lokasi Barang: <strong>{item.location}</strong>
+              </p>
+              {/* Peta OpenStreetMap Embed Lokasi Barang */}
+              <OsmMapEmbed
+                locationName={item.location}
+                coordinates={item.coordinates}
+                label={`Area Barang: ${item.location}`}
+                height={150}
+              />
+            </div>
 
             {canBarter && (
               <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200/70 text-xs">
@@ -615,12 +660,22 @@ export default function ProductDetail({
               )}
             </div>
 
-            {/* Pilihan Titik Aman COD */}
+            {/* Pilihan Titik Aman COD + Pratinjau Peta Titik Temu */}
             {!isOwnItem && !isSold && (
-              <div>
-                <label className="block text-[11px] font-bold text-gray-700 mb-1">
-                  Pilih Rekomendasi Titik Aman COD:
-                </label>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] font-bold text-gray-700">
+                    Pilih Rekomendasi Titik Aman COD:
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowCodMapPreview((prev) => !prev)}
+                    className="text-[11px] font-semibold text-emerald-700 hover:underline"
+                  >
+                    {showCodMapPreview ? 'Sembunyikan Peta COD' : 'Lihat Peta COD'}
+                  </button>
+                </div>
+
                 <select
                   value={selectedCodSpot}
                   onChange={(e) => setSelectedCodSpot(e.target.value)}
@@ -632,6 +687,15 @@ export default function ProductDetail({
                     </option>
                   ))}
                 </select>
+
+                {showCodMapPreview && (
+                  <OsmMapEmbed
+                    locationName={selectedCodSpot}
+                    label={`Titik Temu COD: ${selectedCodSpot}`}
+                    height={135}
+                    zoomDelta={0.0028}
+                  />
+                )}
               </div>
             )}
 
@@ -764,13 +828,27 @@ export default function ProductDetail({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">
-                  Lokasi Barang / Area Kampus
-                </label>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-gray-700">
+                    Lokasi Barang / Area Kampus
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleUseCurrentGps}
+                    disabled={isLocatingGps}
+                    className="text-[11px] font-bold text-emerald-700 hover:underline disabled:opacity-50"
+                  >
+                    {isLocatingGps ? 'Mendeteksi GPS...' : '📍 Gunakan GPS Saat Ini'}
+                  </button>
+                </div>
+
                 <select
                   value={editLocation}
-                  onChange={(e) => setEditLocation(e.target.value)}
+                  onChange={(e) => {
+                    setEditLocation(e.target.value);
+                    setEditCoordinates(null);
+                  }}
                   className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-emerald-600"
                 >
                   {!CAMPUS_LOCATIONS.includes(editLocation as any) && (
@@ -782,6 +860,17 @@ export default function ProductDetail({
                     </option>
                   ))}
                 </select>
+
+                <OsmMapEmbed
+                  locationName={editLocation}
+                  coordinates={editCoordinates}
+                  label={
+                    editCoordinates
+                      ? `${editLocation} (GPS: ${editCoordinates.lat}, ${editCoordinates.lng})`
+                      : editLocation
+                  }
+                  height={140}
+                />
               </div>
 
               <div>
