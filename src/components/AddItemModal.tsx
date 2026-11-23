@@ -2,6 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getDB, saveDB } from '../services/db';
 import { Item } from '../types/database';
+import OsmMapEmbed, {
+  MapCoordinates,
+  resolveLocationCoordinates,
+} from './OsmMapEmbed';
 
 interface AddItemModalProps {
   isOpen: boolean;
@@ -109,7 +113,6 @@ function compressImage(file: File, maxWidth = 800, quality = 0.8): Promise<strin
           return;
         }
 
-        // Isi background putih agar file transparan (PNG) tidak menghasilkan background hitam saat konversi ke JPEG
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
@@ -152,13 +155,13 @@ export default function AddItemModal({
   const [status, setStatus] = useState<'jual' | 'barter' | 'keduanya'>('keduanya');
   const [selectedPresetLocation, setSelectedPresetLocation] = useState<string>(CAMPUS_LOCATIONS[0]);
   const [customLocation, setCustomLocation] = useState('');
+  const [gpsCoords, setGpsCoords] = useState<MapCoordinates | null>(null);
   const [isLocating, setIsLocating] = useState(false);
 
   const [deskripsi, setDeskripsi] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [showToast, setShowToast] = useState(false);
 
-  // Sinkronkan state form setiap kali modal dibuka atau editItem berubah
   useEffect(() => {
     if (!isOpen) return;
 
@@ -175,7 +178,6 @@ export default function AddItemModal({
       const initialPrice = parseHarga(editItem.harga ?? (extendedItem.price as number | undefined));
       const initialFoto = editItem.foto || DEFAULT_PLACEHOLDER;
 
-      // Baca tipe penawaran dari transactionType terlebih dahulu jika status sudah berubah jadi 'sold'/'available'
       const rawOffer = String(extendedItem.transactionType || editItem.status || 'keduanya');
       const validOffer: 'jual' | 'barter' | 'keduanya' =
         rawOffer === 'jual' || rawOffer === 'barter' || rawOffer === 'keduanya'
@@ -184,6 +186,7 @@ export default function AddItemModal({
 
       const initialLoc = (editItem.lokasi || currentUser?.lokasi || CAMPUS_LOCATIONS[0]).trim();
       const isKnownLocation = CAMPUS_LOCATIONS.includes(initialLoc);
+      const existingCoords = (extendedItem.koordinat as MapCoordinates | undefined) || null;
 
       setNama(initialName);
       setKategori(CATEGORIES.includes(editItem.kategori) ? editItem.kategori : CATEGORIES[0]);
@@ -192,6 +195,7 @@ export default function AddItemModal({
       setFoto(initialFoto);
       setStatus(validOffer);
       setDeskripsi(editItem.deskripsi || '');
+      setGpsCoords(existingCoords);
 
       if (isKnownLocation) {
         setSelectedPresetLocation(initialLoc);
@@ -221,6 +225,7 @@ export default function AddItemModal({
       setPhotoSource('upload');
       setStatus('keduanya');
       setDeskripsi('');
+      setGpsCoords(null);
 
       if (isKnownDefault) {
         setSelectedPresetLocation(defaultLoc);
@@ -234,9 +239,18 @@ export default function AddItemModal({
 
   if (!isOpen) return null;
 
+  const activeLocationLabel =
+    selectedPresetLocation === 'CUSTOM'
+      ? customLocation.trim() || currentUser?.lokasi || CAMPUS_LOCATIONS[0]
+      : selectedPresetLocation;
+
+  const previewCoords = resolveLocationCoordinates(
+    activeLocationLabel,
+    gpsCoords
+  );
+
   const handleHargaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawDigits = e.target.value.replace(/\D/g, '');
-    // Batasi maksimal 12 digit (hingga ratusan miliar) agar aman dan tidak overflow
     const trimmedDigits = rawDigits.slice(0, 12);
     setHargaDisplay(formatRibuan(trimmedDigits));
   };
@@ -251,8 +265,9 @@ export default function AddItemModal({
     setIsLocating(true);
     navigator.geolocation.getCurrentPosition(
       pos => {
-        const lat = pos.coords.latitude.toFixed(5);
-        const lng = pos.coords.longitude.toFixed(5);
+        const lat = Number(pos.coords.latitude.toFixed(5));
+        const lng = Number(pos.coords.longitude.toFixed(5));
+        setGpsCoords({ lat, lng });
         setSelectedPresetLocation('CUSTOM');
         setCustomLocation(`Area Kampus UNNES (${lat}, ${lng})`);
         setIsLocating(false);
@@ -276,7 +291,7 @@ export default function AddItemModal({
       return;
     }
 
-    const MAX_SIZE = 2 * 1024 * 1024; // 2MB
+    const MAX_SIZE = 2 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
       setErrorMsg('Ukuran file foto melebihi 2 MB. Harap pilih gambar yang lebih kecil.');
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -318,11 +333,7 @@ export default function AddItemModal({
       return;
     }
 
-    const resolvedLocation =
-      selectedPresetLocation === 'CUSTOM'
-        ? customLocation.trim() || currentUser.lokasi || CAMPUS_LOCATIONS[0]
-        : selectedPresetLocation;
-
+    const resolvedLocation = activeLocationLabel;
     const cleanFoto = foto.trim() || DEFAULT_PLACEHOLDER;
     const cleanDeskripsi = deskripsi.trim() || 'Tidak ada deskripsi.';
     const db = getDB();
@@ -340,7 +351,6 @@ export default function AddItemModal({
       }
 
       const existing = db.items[idx] as Item & Record<string, unknown>;
-      // Pertahankan status 'sold' jika barang memang sudah ditandai terjual di Barang Saya
       const preservedStatus =
         (existing.status as string) === 'sold' ? ('sold' as Item['status']) : status;
 
@@ -361,6 +371,7 @@ export default function AddItemModal({
         status: preservedStatus,
         transactionType: status,
         lokasi: resolvedLocation,
+        koordinat: previewCoords,
         deskripsi: cleanDeskripsi,
       };
 
@@ -376,7 +387,6 @@ export default function AddItemModal({
       return;
     }
 
-    // Mode Tambah Barang Baru
     const existingNums = db.items
       .map(i => parseInt(i.id.replace('ITM-', ''), 10))
       .filter(n => !isNaN(n));
@@ -399,10 +409,10 @@ export default function AddItemModal({
       id_user: currentUser.id,
       ownerId: currentUser.id,
       lokasi: resolvedLocation,
+      koordinat: previewCoords,
       deskripsi: cleanDeskripsi,
     };
 
-    // Tambahkan di awal agar langsung muncul paling atas
     db.items.unshift(newItem as Item);
     saveDB(db);
 
@@ -550,9 +560,9 @@ export default function AddItemModal({
             )}
           </div>
 
-          {/* Lokasi Titik COD Kampus / Kos */}
-          <div>
-            <div className="flex items-center justify-between mb-1">
+          {/* Lokasi Titik COD Kampus / Kos + OpenStreetMap Embed */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
               <label className="block text-xs font-bold text-gray-700">Titik COD Kampus / Kos</label>
               <button
                 type="button"
@@ -565,7 +575,10 @@ export default function AddItemModal({
             </div>
             <select
               value={selectedPresetLocation}
-              onChange={e => setSelectedPresetLocation(e.target.value)}
+              onChange={e => {
+                setSelectedPresetLocation(e.target.value);
+                setGpsCoords(null);
+              }}
               className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] cursor-pointer"
               style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
             >
@@ -581,12 +594,22 @@ export default function AddItemModal({
               <input
                 type="text"
                 value={customLocation}
-                onChange={e => setCustomLocation(e.target.value)}
+                onChange={e => {
+                  setCustomLocation(e.target.value);
+                  setGpsCoords(null);
+                }}
                 placeholder="Masukkan nama kos, gedung, atau titik COD..."
-                className="mt-2 w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
+                className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
                 style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
               />
             )}
+
+            {/* Pratinjau OpenStreetMap Embed */}
+            <OsmMapEmbed
+              locationName={activeLocationLabel}
+              coordinates={gpsCoords}
+              height={150}
+            />
           </div>
 
           {/* Status Jual / Barter */}
@@ -602,11 +625,10 @@ export default function AddItemModal({
                   type="button"
                   key={opt.id}
                   onClick={() => setStatus(opt.id as 'jual' | 'barter' | 'keduanya')}
-                  className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
-                    status === opt.id
-                      ? 'border-[var(--color-primary)] bg-[#567257]/15 text-[var(--color-primary)]'
-                      : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
-                  }`}
+                  className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${status === opt.id
+                    ? 'border-[var(--color-primary)] bg-[#567257]/15 text-[var(--color-primary)]'
+                    : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
+                    }`}
                 >
                   {opt.label}
                 </button>
@@ -621,7 +643,6 @@ export default function AddItemModal({
               <span className="text-[11px] text-gray-400">Pilih salah satu opsi</span>
             </div>
 
-            {/* Tab Pemilih Opsi Foto */}
             <div className="grid grid-cols-3 gap-2 mb-2.5">
               {[
                 { id: 'upload', label: 'Upload File' },
@@ -632,18 +653,16 @@ export default function AddItemModal({
                   type="button"
                   key={tab.id}
                   onClick={() => setPhotoSource(tab.id as 'upload' | 'preset' | 'url')}
-                  className={`py-1.5 px-2 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
-                    photoSource === tab.id
-                      ? 'border-[var(--color-primary)] bg-[#567257]/15 text-[var(--color-primary)]'
-                      : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
-                  }`}
+                  className={`py-1.5 px-2 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${photoSource === tab.id
+                    ? 'border-[var(--color-primary)] bg-[#567257]/15 text-[var(--color-primary)]'
+                    : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
+                    }`}
                 >
                   {tab.label}
                 </button>
               ))}
             </div>
 
-            {/* Opsi 1: Upload dari Device */}
             {photoSource === 'upload' && (
               <div>
                 <label
@@ -685,7 +704,6 @@ export default function AddItemModal({
               </div>
             )}
 
-            {/* Opsi 2: Pilih Preset */}
             {photoSource === 'preset' && (
               <div>
                 <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -697,11 +715,10 @@ export default function AddItemModal({
                         setFoto(p.url);
                         setUploadedFileName('');
                       }}
-                      className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                        foto === p.url
-                          ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/15 text-[var(--color-accent)] font-bold'
-                          : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
-                      }`}
+                      className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer ${foto === p.url
+                        ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/15 text-[var(--color-accent)] font-bold'
+                        : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
+                        }`}
                     >
                       {p.label}
                     </button>
@@ -710,7 +727,6 @@ export default function AddItemModal({
               </div>
             )}
 
-            {/* Opsi 3: Masukkan URL */}
             {photoSource === 'url' && (
               <div>
                 <input
@@ -727,7 +743,6 @@ export default function AddItemModal({
               </div>
             )}
 
-            {/* Preview Thumbnail */}
             {foto && (
               <div
                 className="mt-2.5 flex items-center gap-3 p-2.5 rounded-xl border"

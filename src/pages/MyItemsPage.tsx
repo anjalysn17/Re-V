@@ -1,6 +1,13 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import * as dbService from '../services/db';
+import OsmMapEmbed from '../components/OsmMapEmbed';
+import {
+  DEFAULT_LOCATION_ID,
+  UNNES_LOCATIONS,
+  findLocation,
+  getGroupedLocations,
+} from '../constants/locations';
 
 interface MyItemsPageProps {
   onNavigate?: (page: string, params?: any) => void;
@@ -14,24 +21,6 @@ const PAKEM_CATEGORIES = [
   'Fashion',
   'Perlengkapan',
   'Tas',
-] as const;
-
-// Daftar titik lokasi COD sekitar kampus UNNES
-const UNNES_LOCATIONS = [
-  'Sekaran - Gerbang Utama UNNES',
-  'Perpustakaan Pusat / Rektorat',
-  'Fakultas Teknik (FT)',
-  'Fakultas Bahasa & Seni (FBS)',
-  'Fakultas Ilmu Pendidikan (FIP)',
-  'Fakultas Matematika & IPA (FMIPA)',
-  'Fakultas Ekonomi & Bisnis (FEB)',
-  'Fakultas Hukum (FH)',
-  'Fakultas Ilmu Sosial & Politik (FISIP)',
-  'Fakultas Ilmu Keolahragaan (FIK)',
-  'Patemon / Gang Pete',
-  'Banaran / Taman Siswa',
-  'Kalimasada / Trangkil',
-  'Lokasi Lainnya...',
 ] as const;
 
 const ITEM_CONDITIONS = [
@@ -137,6 +126,10 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
   const [filterStatus, setFilterStatus] = useState<'all' | 'available' | 'sold'>('all');
   const [, setRefresh] = useState(0);
 
+  const groupedLocations = getGroupedLocations();
+  const defaultLocationObj =
+    UNNES_LOCATIONS.find((l) => l.id === DEFAULT_LOCATION_ID) || UNNES_LOCATIONS[0];
+
   // State Modal Edit Barang
   const [editingItem, setEditingItem] = useState<any | null>(null);
   const [editTitle, setEditTitle] = useState('');
@@ -144,8 +137,10 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
   const [editPriceInput, setEditPriceInput] = useState('');
   const [editTxType, setEditTxType] = useState<'jual' | 'barter' | 'keduanya'>('jual');
   const [editCondition, setEditCondition] = useState<string>('Grade A');
-  const [editLocationSelect, setEditLocationSelect] = useState<string>(UNNES_LOCATIONS[0]);
+  const [editLocationSelect, setEditLocationSelect] = useState<string>(defaultLocationObj.name);
   const [editCustomLocation, setEditCustomLocation] = useState('');
+  const [editCoords, setEditCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [isLocatingGps, setIsLocatingGps] = useState(false);
   const [editDescription, setEditDescription] = useState('');
   const [editImage, setEditImage] = useState('');
   const [editError, setEditError] = useState('');
@@ -217,7 +212,6 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
       const txType = resolveTransactionType(item);
 
       if (currentlySold) {
-        // Aktifkan kembali: pulihkan status ke jenis penawaran ('jual' | 'barter' | 'keduanya')
         return {
           ...item,
           terjual: false,
@@ -228,7 +222,6 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
         };
       }
 
-      // Tandai selesai: simpan jenis penawaran di transactionType agar tidak hilang
       return {
         ...item,
         terjual: true,
@@ -256,8 +249,8 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
     const price = parsePriceValue(item.harga ?? item.price);
     const txType = resolveTransactionType(item);
     const condition = item.kondisi || item.condition || 'Grade A';
-    const rawLoc = item.lokasi || item.location || UNNES_LOCATIONS[0];
-    const isPresetLoc = (UNNES_LOCATIONS as readonly string[]).includes(rawLoc);
+    const rawLoc = item.lokasi || item.location || defaultLocationObj.name;
+    const matchedPreset = findLocation(rawLoc);
 
     setEditingItem(item);
     setEditTitle(title);
@@ -265,16 +258,68 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
     setEditPriceInput(formatThousands(price));
     setEditTxType(txType);
     setEditCondition(condition);
-    if (isPresetLoc && rawLoc !== 'Lokasi Lainnya...') {
-      setEditLocationSelect(rawLoc);
+
+    if (matchedPreset) {
+      setEditLocationSelect(matchedPreset.name);
       setEditCustomLocation('');
+      setEditCoords(
+        item.koordinat && typeof item.koordinat.lat === 'number'
+          ? item.koordinat
+          : { lat: matchedPreset.lat, lng: matchedPreset.lng }
+      );
     } else {
       setEditLocationSelect('Lokasi Lainnya...');
       setEditCustomLocation(rawLoc === 'Lokasi Lainnya...' ? '' : rawLoc);
+      setEditCoords(
+        item.koordinat && typeof item.koordinat.lat === 'number'
+          ? item.koordinat
+          : { lat: defaultLocationObj.lat, lng: defaultLocationObj.lng }
+      );
     }
+
     setEditDescription(item.deskripsi || item.description || '');
     setEditImage(item.foto || item.image || '/assets/seed-images/placeholder.svg');
     setEditError('');
+  };
+
+  const handleLocationSelectChange = (value: string) => {
+    setEditLocationSelect(value);
+    if (value === 'Lokasi Lainnya...') {
+      if (!editCoords) {
+        setEditCoords({ lat: defaultLocationObj.lat, lng: defaultLocationObj.lng });
+      }
+      return;
+    }
+    const preset = findLocation(value);
+    if (preset) {
+      setEditCoords({ lat: preset.lat, lng: preset.lng });
+    }
+  };
+
+  const handleUseCurrentGps = () => {
+    if (!navigator.geolocation) {
+      setEditError('Browser tidak mendukung deteksi lokasi GPS.');
+      return;
+    }
+    setEditError('');
+    setIsLocatingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        setEditCoords({ lat, lng });
+        setEditLocationSelect('Lokasi Lainnya...');
+        if (!editCustomLocation.trim()) {
+          setEditCustomLocation('Titik GPS Terkini (Sekitar UNNES)');
+        }
+        setIsLocatingGps(false);
+      },
+      () => {
+        setEditError('Gagal mengambil koordinat GPS. Pastikan izin lokasi browser aktif.');
+        setIsLocatingGps(false);
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
   };
 
   const handlePriceInputChange = (rawVal: string) => {
@@ -318,6 +363,13 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
         ? editCustomLocation.trim() || 'Sekitar Kampus UNNES'
         : editLocationSelect;
 
+    const presetMatch = findLocation(finalLocation);
+    const finalCoords =
+      editCoords ||
+      (presetMatch
+        ? { lat: presetMatch.lat, lng: presetMatch.lng }
+        : { lat: defaultLocationObj.lat, lng: defaultLocationObj.lng });
+
     const currentlySold = isItemSold(editingItem);
 
     const updatedItems = allItems.map((item: any) => {
@@ -331,6 +383,7 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
         deskripsi: editDescription.trim(),
         kondisi: editCondition,
         lokasi: finalLocation,
+        koordinat: finalCoords,
         foto: editImage || item.foto || item.image,
         status: currentlySold ? 'sold' : editTxType,
         terjual: currentlySold,
@@ -372,6 +425,11 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
 
   const hasCustomCondition =
     Boolean(editCondition) && !(ITEM_CONDITIONS as readonly string[]).includes(editCondition);
+
+  const previewLocationLabel =
+    editLocationSelect === 'Lokasi Lainnya...'
+      ? editCustomLocation.trim() || 'Sekitar Kampus UNNES'
+      : editLocationSelect;
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-5">
@@ -503,7 +561,10 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
                     <p className="text-sm font-bold text-gray-800 mt-0.5 whitespace-nowrap">
                       {price > 0 ? `Rp ${price.toLocaleString('id-ID')}` : 'Khusus Barter'}
                     </p>
-                    <p className="text-[11px] text-gray-500 mt-1 truncate" title={`${category} • ${location}`}>
+                    <p
+                      className="text-[11px] text-gray-500 mt-1 truncate"
+                      title={`${category} • ${location}`}
+                    >
                       {category} • 📍 {location}
                     </p>
                   </div>
@@ -710,21 +771,37 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
                 </div>
               )}
 
-              {/* Lokasi COD Kampus */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">
-                  Titik Lokasi COD / Area Barang *
-                </label>
+              {/* Lokasi COD Kampus + Pratinjau Peta OSM */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="block text-xs font-semibold text-gray-700">
+                    Titik Lokasi COD / Area Barang *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleUseCurrentGps}
+                    disabled={isLocatingGps}
+                    className="text-[11px] font-semibold text-emerald-700 hover:underline disabled:opacity-50"
+                  >
+                    {isLocatingGps ? 'Mendeteksi GPS...' : '🎯 Gunakan Lokasi GPS'}
+                  </button>
+                </div>
+
                 <select
                   value={editLocationSelect}
-                  onChange={(e) => setEditLocationSelect(e.target.value)}
+                  onChange={(e) => handleLocationSelectChange(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 text-xs bg-white focus:outline-none focus:border-emerald-600"
                 >
-                  {UNNES_LOCATIONS.map((loc) => (
-                    <option key={loc} value={loc}>
-                      {loc}
-                    </option>
+                  {groupedLocations.map((group) => (
+                    <optgroup key={group.zone} label={group.zone}>
+                      {group.locations.map((loc) => (
+                        <option key={loc.id} value={loc.name}>
+                          {loc.name}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
+                  <option value="Lokasi Lainnya...">Lokasi Lainnya...</option>
                 </select>
 
                 {editLocationSelect === 'Lokasi Lainnya...' && (
@@ -733,9 +810,15 @@ export default function MyItemsPage({ onNavigate, onOpenAddItem }: MyItemsPagePr
                     value={editCustomLocation}
                     onChange={(e) => setEditCustomLocation(e.target.value)}
                     placeholder="Tulis detail lokasi COD (mis. Kos Wisma Melati Sekaran)"
-                    className="w-full mt-2 px-3.5 py-2.5 rounded-xl border border-gray-200 text-xs focus:outline-none focus:border-emerald-600"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 text-xs focus:outline-none focus:border-emerald-600"
                   />
                 )}
+
+                <OsmMapEmbed
+                  locationName={previewLocationLabel}
+                  coordinates={editCoords}
+                  height={160}
+                />
               </div>
 
               {/* Deskripsi */}

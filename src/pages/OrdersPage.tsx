@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { notifyLocalChange } from '../services/api';
+import OsmMapEmbed from '../components/OsmMapEmbed';
 
 export interface OrderRecord {
   id: string;
@@ -13,6 +14,7 @@ export interface OrderRecord {
   price?: number;
   barterOfferTitle?: string; // Nama barang yang ditukar jika tipe 'barter'
   codLocation?: string;
+  codCoordinates?: { lat: number; lng: number };
   status: 'Menunggu COD' | 'Diproses' | 'Selesai' | 'Dibatalkan';
   createdAt: string;
 }
@@ -75,6 +77,7 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
   const { currentUser, openAuthModal } = useAuth() as any;
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [filterType, setFilterType] = useState<FilterTab>('all');
+  const [expandedMapId, setExpandedMapId] = useState<string | null>(null);
 
   const go = (page: string, params?: any) => {
     if (onNavigate) onNavigate(page, params);
@@ -246,6 +249,8 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
             const isCancelled = order.status === 'Dibatalkan';
             const isActive =
               order.status === 'Menunggu COD' || order.status === 'Diproses';
+            const hasLocation = Boolean(order.codLocation || order.codCoordinates);
+            const isMapOpen = expandedMapId === order.id;
 
             return (
               <div
@@ -305,14 +310,36 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
                         Rp {Number(order.price || 0).toLocaleString('id-ID')}
                       </p>
                     )}
-                    {order.codLocation && (
-                      <p className="text-[11px] text-gray-500 mt-1 flex items-center gap-1">
-                        <span>📍</span>
-                        <span>Titik COD: {order.codLocation}</span>
-                      </p>
+                    {hasLocation && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
+                        <span className="text-gray-500 flex items-center gap-1">
+                          <span>📍</span>
+                          <span>
+                            Titik COD: {order.codLocation || 'Area Kampus UNNES'}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedMapId(isMapOpen ? null : order.id)
+                          }
+                          className="text-emerald-700 hover:underline font-semibold"
+                        >
+                          {isMapOpen ? 'Tutup Peta' : 'Lihat Peta'}
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
+
+                {/* Peta OpenStreetMap Embed untuk Titik COD */}
+                {hasLocation && isMapOpen && (
+                  <OsmMapEmbed
+                    locationName={order.codLocation}
+                    coordinates={order.codCoordinates}
+                    height={180}
+                  />
+                )}
 
                 {/* Aksi Transaksi */}
                 <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-50">
