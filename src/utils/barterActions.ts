@@ -1,10 +1,11 @@
-import { getDB, saveDB, generateId } from '../services/db';
+import { getDB, saveDB, generateId, parseSafePrice } from '../services/db';
 import { Item, User, Offer, Conversation, Message, Notification } from '../types/database';
 
 interface CreateOfferParams {
   myItem: Item;
   targetItem: Item;
   currentUser: User;
+  codLocation?: string;
 }
 
 interface CreateOfferResult {
@@ -13,13 +14,14 @@ interface CreateOfferResult {
 }
 
 /**
- * Membuat tawaran barter resmi, membuat percakapan jika belum ada,
- * menambahkan pesan tawaran resmi ke percakapan, serta mengirimkan notifikasi.
+ * Membuat tawaran barter resmi, membuat/memperbarui percakapan,
+ * mengirim pesan dengan metadata selisih harga otomatis (barterOffer), serta notifikasi.
  */
 export function createOfferAndConversation({
   myItem,
   targetItem,
   currentUser,
+  codLocation,
 }: CreateOfferParams): CreateOfferResult {
   const currentDB = getDB();
   if (!Array.isArray(currentDB.offers)) currentDB.offers = [];
@@ -27,10 +29,13 @@ export function createOfferAndConversation({
   if (!Array.isArray(currentDB.messages)) currentDB.messages = [];
   if (!Array.isArray(currentDB.notifications)) currentDB.notifications = [];
 
-  // 1. Buat record Offer baru
-  const newOfferId = generateId('OFR', currentDB.offers);
-  const priceDiff = Math.abs(myItem.harga - targetItem.harga);
+  const offeredPrice = parseSafePrice(myItem.harga ?? myItem.price ?? 0);
+  const targetPrice = parseSafePrice(targetItem.harga ?? targetItem.price ?? 0);
+  // Positif = pengaju barter menambah tunai, Negatif = pemilik barang target menambah tunai
+  const signedDiff = targetPrice - offeredPrice;
 
+  // 1. Buat record Offer baru
+  const newOfferId = generateId('OFR');
   const newOffer: Offer = {
     id: newOfferId,
     item_ditawarkan: myItem.id,
@@ -38,60 +43,106 @@ export function createOfferAndConversation({
     status: 'pending',
     id_pengirim: currentUser.id,
     id_penerima: targetItem.id_pemilik,
-    selisih_harga: priceDiff,
+    selisih_harga: signedDiff,
+    ...(codLocation ? { lokasi_cod: codLocation } : {}),
   };
   currentDB.offers.unshift(newOffer);
 
-  // 2. Cari atau buat Conversation untuk pasangan user ini (tanpa syarat id_item_terkait)
+  // 2. Cari atau buat Conversation untuk pasangan user ini
   let conv = currentDB.conversations.find(
-    c =>
-      (c.id_user_a === currentUser.id && c.id_user_b === targetItem.id_pemilik) ||
-      (c.id_user_a === targetItem.id_pemilik && c.id_user_b === currentUser.id)
+    (c) =>
+      (String(c.id_user_a) === String(currentUser.id) &&
+        String(c.id_user_b) === String(targetItem.id_pemilik)) ||
+      (String(c.id_user_a) === String(targetItem.id_pemilik) &&
+        String(c.id_user_b) === String(currentUser.id))
   );
 
+  const nowIso = new Date().toISOString();
+  const offeredName = myItem.nama || myItem.title || myItem.nama_barang || 'Barang Penawaran';
+  const targetName = targetItem.nama || targetItem.title || targetItem.nama_barang || 'Barang Target';
+
+  const diffSummary =
+    signedDiff > 0
+      ? `Estimasi selisih: +Rp ${signedDiff.toLocaleString('id-ID')} (pengaju menambah)`
+      : signedDiff < 0
+      ? `Estimasi selisih: -Rp ${Math.abs(signedDiff).toLocaleString('id-ID')} (barang penawar lebih mahal)`
+      : 'Estimasi selisih: Rp 0 (nilai seimbang)';
+
+  const offerMsgText = `Pengajuan Barter: "${offeredName}" (Rp ${offeredPrice.toLocaleString(
+    'id-ID'
+  )}) ⇄ "${targetName}" (Rp ${targetPrice.toLocaleString('id-ID')}). ${diffSummary}.`;
+
   if (!conv) {
-    const newConvId = generateId('CONV', currentDB.conversations);
+    const newConvId = generateId('CONV');
     conv = {
       id: newConvId,
       id_user_a: currentUser.id,
       id_user_b: targetItem.id_pemilik,
       id_item_terkait: targetItem.id,
     };
+    (conv as any).participants = [String(currentUser.id), String(targetItem.id_pemilik)];
+    (conv as any).itemId = targetItem.id;
+    (conv as any).itemTitle = targetName;
+    (conv as any).itemImage = targetItem.foto;
+    (conv as any).itemPrice = targetPrice;
+    (conv as any).pesan_terakhir = offerMsgText;
+    (conv as any).lastMessage = offerMsgText;
+    (conv as any).updatedAt = nowIso;
     currentDB.conversations.unshift(conv);
   } else {
-    // Update konteks barang terbaru yang sedang dibahas
     conv.id_item_terkait = targetItem.id;
+    (conv as any).itemId = targetItem.id;
+    (conv as any).itemTitle = targetName;
+    (conv as any).itemImage = targetItem.foto;
+    (conv as any).itemPrice = targetPrice;
+    (conv as any).pesan_terakhir = offerMsgText;
+    (conv as any).lastMessage = offerMsgText;
+    (conv as any).updatedAt = nowIso;
   }
 
-  // 3. Tambahkan 1 Message baru dengan type 'offer'
-  const newMsgId = generateId('MSG', currentDB.messages);
-  const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-  const offerMsgText = `Tawaran Barter Resmi\n\nSaya tawarkan: ${myItem.nama} (Rp ${myItem.harga.toLocaleString('id-ID')})\nUntuk: ${targetItem.nama} (Rp ${targetItem.harga.toLocaleString('id-ID')})\nEstimasi selisih: Rp ${priceDiff.toLocaleString('id-ID')}`;
-
-  const newMsg: Message = {
+  // 3. Tambahkan Message dengan metadata barterOffer agar kartu selisih otomatis tampil di ChatPage
+  const newMsgId = generateId('MSG');
+  const newMsg: Message & Record<string, any> = {
     id: newMsgId,
     id_conversation: conv.id,
+    conversationId: conv.id,
     id_pengirim: currentUser.id,
+    senderId: currentUser.id,
+    senderName: currentUser.nama,
     teks: offerMsgText,
-    waktu: timeStr,
+    text: offerMsgText,
+    waktu: nowIso,
+    createdAt: nowIso,
     status_baca: false,
     type: 'offer',
+    barterOffer: {
+      offerId: newOfferId,
+      offeredItemId: String(myItem.id),
+      offeredItemTitle: offeredName,
+      offeredItemPrice: offeredPrice,
+      offeredItemImage: myItem.foto,
+      targetItemId: String(targetItem.id),
+      targetItemTitle: targetName,
+      targetItemPrice: targetPrice,
+      priceDifference: signedDiff,
+      codLocation: codLocation || targetItem.lokasi || 'Gerbang Utama UNNES (Sekaran)',
+    },
   };
-  currentDB.messages.push(newMsg);
+  currentDB.messages.push(newMsg as Message);
 
   // 4. Tambahkan Notifikasi baru untuk penerima
-  const newNtfId = generateId('NTF', currentDB.notifications);
+  const newNtfId = generateId('NTF');
   const newNotif: Notification = {
     id: newNtfId,
     id_user: targetItem.id_pemilik,
     tipe: 'barter',
-    teks: `Tawaran barter baru dari ${currentUser.nama} untuk ${targetItem.nama}`,
+    teks: `Tawaran barter baru dari ${currentUser.nama} untuk ${targetName}`,
     waktu: 'Baru saja',
     sudah_dibaca: false,
   };
   currentDB.notifications.unshift(newNotif);
 
-  // 5. Simpan ke database localStorage
+  // 5. Simpan ke cache lokal & sinkronkan ke server
   saveDB(currentDB);
 
   return {
@@ -108,7 +159,6 @@ interface OpenConversationParams {
 
 /**
  * Mencari atau membuat percakapan dengan pemilik barang terkait item ini.
- * Jika `initialMessage` diberikan, mengirim 1 pesan teks pembuka dan notifikasi.
  */
 export function getOrCreateConversation({
   targetItem,
@@ -121,52 +171,70 @@ export function getOrCreateConversation({
   if (!Array.isArray(currentDB.notifications)) currentDB.notifications = [];
 
   let conv = currentDB.conversations.find(
-    c =>
-      (c.id_user_a === currentUser.id && c.id_user_b === targetItem.id_pemilik) ||
-      (c.id_user_a === targetItem.id_pemilik && c.id_user_b === currentUser.id)
+    (c) =>
+      (String(c.id_user_a) === String(currentUser.id) &&
+        String(c.id_user_b) === String(targetItem.id_pemilik)) ||
+      (String(c.id_user_a) === String(targetItem.id_pemilik) &&
+        String(c.id_user_b) === String(currentUser.id))
   );
 
   let updated = false;
+  const nowIso = new Date().toISOString();
+  const targetName = targetItem.nama || targetItem.title || targetItem.nama_barang || 'Barang';
 
   if (!conv) {
-    const newConvId = generateId('CONV', currentDB.conversations);
+    const newConvId = generateId('CONV');
     conv = {
       id: newConvId,
       id_user_a: currentUser.id,
       id_user_b: targetItem.id_pemilik,
       id_item_terkait: targetItem.id,
     };
+    (conv as any).participants = [String(currentUser.id), String(targetItem.id_pemilik)];
+    (conv as any).itemId = targetItem.id;
+    (conv as any).itemTitle = targetName;
+    (conv as any).itemImage = targetItem.foto;
+    (conv as any).updatedAt = nowIso;
     currentDB.conversations.unshift(conv);
     updated = true;
-  } else {
-    if (conv.id_item_terkait !== targetItem.id) {
-      conv.id_item_terkait = targetItem.id;
-      updated = true;
-    }
+  } else if (conv.id_item_terkait !== targetItem.id) {
+    conv.id_item_terkait = targetItem.id;
+    (conv as any).itemId = targetItem.id;
+    (conv as any).itemTitle = targetName;
+    (conv as any).itemImage = targetItem.foto;
+    (conv as any).updatedAt = nowIso;
+    updated = true;
   }
 
-  // Jika ada pesan pembuka (misal ajakan COD via chat)
   if (initialMessage && initialMessage.trim()) {
-    const newMsgId = generateId('MSG', currentDB.messages);
-    const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    const cleanText = initialMessage.trim();
+    const newMsgId = generateId('MSG');
 
-    const newMsg: Message = {
+    const newMsg: Message & Record<string, any> = {
       id: newMsgId,
       id_conversation: conv.id,
+      conversationId: conv.id,
       id_pengirim: currentUser.id,
-      teks: initialMessage.trim(),
-      waktu: timeStr,
+      senderId: currentUser.id,
+      senderName: currentUser.nama,
+      teks: cleanText,
+      text: cleanText,
+      waktu: nowIso,
+      createdAt: nowIso,
       status_baca: false,
       type: 'text',
     };
-    currentDB.messages.push(newMsg);
+    currentDB.messages.push(newMsg as Message);
+    (conv as any).pesan_terakhir = cleanText;
+    (conv as any).lastMessage = cleanText;
+    (conv as any).updatedAt = nowIso;
 
-    const newNtfId = generateId('NTF', currentDB.notifications);
+    const newNtfId = generateId('NTF');
     const newNotif: Notification = {
       id: newNtfId,
       id_user: targetItem.id_pemilik,
       tipe: 'chat',
-      teks: `Pesan baru dari ${currentUser.nama} tentang ${targetItem.nama}`,
+      teks: `Pesan baru dari ${currentUser.nama} tentang ${targetName}`,
       waktu: 'Baru saja',
       sudah_dibaca: false,
     };

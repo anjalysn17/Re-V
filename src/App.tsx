@@ -33,7 +33,6 @@ export type NavigateFunction = (
 
 type Page = 'home' | 'product' | 'barter' | 'chat' | 'admin' | 'my-items' | 'category' | 'search' | 'cart' | 'profile' | 'orders';
 
-// --- KOMPONEN NAVIGASI BAWAH (KHUSUS MOBILE) ---
 function BottomNavigation({ 
   activePage, 
   onNavigate, 
@@ -125,7 +124,7 @@ function MainLayout() {
     if (extraParam && p === 'chat') {
       setSelectedConversationId(extraParam);
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' }); // Otomatis scroll ke atas saat pindah halaman
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     setPage(p as Page);
   };
 
@@ -133,8 +132,6 @@ function MainLayout() {
     (window as any).revNavigate = navigate;
   }, []);
 
-  // Segarkan tampilan saat data dari server berubah (mis. chat baru dari pengguna lain),
-  // kecuali saat pengguna sedang mengetik agar isian tidak hilang.
   useEffect(() => {
     const onDbUpdated = () => {
       const el = document.activeElement;
@@ -152,7 +149,6 @@ function MainLayout() {
     ? (getDB().cart || []).filter(c => c.id_user === currentUser.id).length
     : 0;
 
-  // Handler tersentralisasi untuk mengecek login sebelum buka modal tambah barang
   const handleOpenAddItem = () => {
     if (!currentUser) {
       openAuthModal('login');
@@ -163,7 +159,6 @@ function MainLayout() {
 
   return (
     <div className="min-h-screen relative flex flex-col" style={{ background: 'var(--color-bg)', fontFamily: 'var(--font-body)' }}>
-      {/* Header Utama */}
       <Header
         activePage={page}
         onNavigate={navigate}
@@ -171,7 +166,6 @@ function MainLayout() {
         cartCount={cartCount}
       />
 
-      {/* Konten Halaman dengan padding bawah ekstra (pb-24) khusus mobile agar tidak tertutup Bottom Nav */}
       <main className="flex-1 pb-24 md:pb-10">
         {page === 'home' && <HomePage key={refreshKey} onNavigate={navigate} />}
         {page === 'category' && (
@@ -204,8 +198,8 @@ function MainLayout() {
             onCartUpdated={handleCartUpdated}
           />
         )}
-        {page === 'profile' && <ProfilePage />}
-        {page === 'orders' && <OrdersPage />}
+        {page === 'profile' && <ProfilePage onNavigate={navigate} />}
+        {page === 'orders' && <OrdersPage onNavigate={navigate} />}
         {page === 'barter' && (
           <SmartBarter
             onNavigate={navigate}
@@ -215,7 +209,6 @@ function MainLayout() {
         )}
         {page === 'chat' && (
           <ChatPage
-            key={`${refreshKey}-${selectedConversationId || 'default'}`}
             openConversationId={selectedConversationId}
             onNavigate={navigate}
           />
@@ -230,24 +223,20 @@ function MainLayout() {
         )}
       </main>
 
-      {/* Menampilkan Navigasi Bawah Khusus di Layar Mobile */}
       <BottomNavigation 
         activePage={page} 
         onNavigate={navigate} 
         onOpenAddItem={handleOpenAddItem}
       />
 
-      {/* Modal Autentikasi */}
       <AuthModal onLoginSuccess={role => navigate(role === 'admin' ? 'admin' : 'home')} />
 
-      {/* Modal Tambah Barang */}
       <AddItemModal
         isOpen={isAddItemOpen}
         onClose={() => setIsAddItemOpen(false)}
         onItemAdded={() => setRefreshKey(prev => prev + 1)}
       />
 
-      {/* Tombol Reset Data (Sembunyikan di Mobile agar tidak mengganggu UI jempol) */}
       {!API_ENABLED && (
         <div className="hidden md:block">
           <ResetDemoButton />

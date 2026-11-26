@@ -1,7 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import * as dbService from '../services/db';
+import { API_ENABLED, getToken } from '../services/api';
 import { addOrderTransaction } from './OrdersPage';
+import {
+  POPULAR_COD_SPOTS,
+  UNNES_LOCATIONS,
+  haversineDistanceKm,
+} from '../constants/locations';
+import OsmMapEmbed from '../components/OsmMapEmbed';
 
 interface ChatPageProps {
   openConversationId?: string;
@@ -20,7 +27,9 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
   const [selectedConvId, setSelectedConvId] = useState<string | null>(openConversationId || null);
   const [messageText, setMessageText] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [, setRefresh] = useState(0);
+  const [isRecommendingCod, setIsRecommendingCod] = useState(false);
+  const [codError, setCodError] = useState('');
+  const [, setTick] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const go = (page: string, params?: any) => {
@@ -34,6 +43,17 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
     }
   }, [openConversationId]);
 
+  // Dengarkan pembaruan DB agar pesan baru / penawaran barter langsung tampil tanpa refresh
+  useEffect(() => {
+    const syncView = () => setTick((t) => t + 1);
+    window.addEventListener('rev-db-updated', syncView);
+    window.addEventListener('storage', syncView);
+    return () => {
+      window.removeEventListener('rev-db-updated', syncView);
+      window.removeEventListener('storage', syncView);
+    };
+  }, []);
+
   const db = dbService.getDB() as any;
   const allConversations: any[] = db.conversations || [];
   const allUsers: any[] = db.users || [];
@@ -42,7 +62,6 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
 
   const uid = currentUser ? String(currentUser.id) : '';
 
-  // Normalisasi filter daftar percakapan milik akun yang sedang login
   const myConversations = allConversations
     .filter((conv: any) => {
       if (!uid) return false;
@@ -50,8 +69,8 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
         return conv.participants.map(String).includes(uid);
       }
       return (
-        String(conv.buyerId ?? conv.buyer_id ?? conv.senderId ?? '') === uid ||
-        String(conv.sellerId ?? conv.seller_id ?? conv.receiverId ?? '') === uid
+        String(conv.id_user_a ?? conv.buyerId ?? conv.buyer_id ?? conv.senderId ?? '') === uid ||
+        String(conv.id_user_b ?? conv.sellerId ?? conv.seller_id ?? conv.receiverId ?? '') === uid
       );
     })
     .sort((a: any, b: any) => {
@@ -60,31 +79,25 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
       return timeB - timeA;
     });
 
-  // Otomatis pilih percakapan pertama di layar desktop jika belum ada yang dipilih
   useEffect(() => {
     if (!selectedConvId && myConversations.length > 0 && window.innerWidth >= 768) {
       setSelectedConvId(String(myConversations[0].id));
     }
-  }, [myConversations.length]);
+  }, [myConversations.length, selectedConvId]);
 
   const persistDB = (updatedDB: any) => {
-    if (typeof (dbService as any).saveDB === 'function') {
-      (dbService as any).saveDB(updatedDB);
-    } else {
-      localStorage.setItem('rev_db', JSON.stringify(updatedDB));
-    }
-    setRefresh((prev) => prev + 1);
+    dbService.saveDB(updatedDB);
+    setTick((prev) => prev + 1);
   };
 
-  // Helper mencari profil lawan bicara
   const resolvePartner = (conv: any) => {
     let partnerId = '';
     if (Array.isArray(conv.participants)) {
       partnerId = String(conv.participants.find((p: any) => String(p) !== uid) || '');
     } else {
-      const bId = String(conv.buyerId ?? conv.buyer_id ?? conv.senderId ?? '');
-      const sId = String(conv.sellerId ?? conv.seller_id ?? conv.receiverId ?? '');
-      partnerId = bId === uid ? sId : bId;
+      const aId = String(conv.id_user_a ?? conv.buyerId ?? conv.buyer_id ?? conv.senderId ?? '');
+      const bId = String(conv.id_user_b ?? conv.sellerId ?? conv.seller_id ?? conv.receiverId ?? '');
+      partnerId = aId === uid ? bId : aId;
     }
 
     const foundUser = allUsers.find((u: any) => String(u.id) === partnerId);
@@ -100,33 +113,33 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
       id: partnerId,
       name: partnerName,
       avatar: foundUser?.foto_profil || foundUser?.avatar || '',
-      isVerified: Boolean(foundUser?.is_verified || foundUser?.email?.includes('unnes.ac.id')),
+      isVerified: Boolean(foundUser?.is_verified),
     };
   };
 
-  // Helper mencari produk terkait dalam obrolan
   const resolveConversationItem = (conv: any) => {
-    const targetItemId = conv.itemId ?? conv.productId ?? conv.id_item;
+    const targetItemId = conv.itemId ?? conv.id_item_terkait ?? conv.id_barang ?? conv.productId;
     if (!targetItemId) return null;
     return allItems.find((it: any) => String(it.id) === String(targetItemId)) || null;
   };
 
-  // Helper menggabungkan pesan dari conv.messages maupun db.messages secara aman
   const getConversationMessages = (conv: any) => {
     const inlineMsgs: any[] = Array.isArray(conv.messages) ? conv.messages : [];
     const flatMsgs: any[] = globalMessages.filter(
-      (m: any) => String(m.conversationId ?? m.id_conversation ?? m.chatId) === String(conv.id)
+      (m: any) =>
+        String(m.conversationId ?? m.id_conversation ?? m.id_percakapan ?? m.chatId) ===
+        String(conv.id)
     );
 
     const mergedMap = new Map<string, any>();
     [...inlineMsgs, ...flatMsgs].forEach((m: any, idx: number) => {
-      const key = String(m.id || `${m.createdAt || m.timestamp || idx}-${m.text || m.content}`);
+      const key = String(m.id || `${m.createdAt || m.waktu || idx}-${m.text || m.teks || m.content}`);
       mergedMap.set(key, m);
     });
 
     return Array.from(mergedMap.values()).sort((a: any, b: any) => {
-      const tA = new Date(a.createdAt || a.timestamp || 0).getTime();
-      const tB = new Date(b.createdAt || b.timestamp || 0).getTime();
+      const tA = new Date(a.createdAt || a.waktu || a.timestamp || 0).getTime();
+      const tB = new Date(b.createdAt || b.waktu || b.timestamp || 0).getTime();
       return tA - tB;
     });
   };
@@ -140,7 +153,6 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeMessages.length, selectedConvId]);
 
-  // Proteksi belum login
   if (!currentUser) {
     return (
       <div className="max-w-md mx-auto px-4 py-16 text-center">
@@ -161,85 +173,292 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
     );
   }
 
-  const handleSendMessage = (customText?: string) => {
+  const handleSendMessage = (customText?: string, extraMeta?: Record<string, any>) => {
     const content = (customText ?? messageText).trim();
     if (!content || !activeConversation) return;
 
+    const latestDB = dbService.getDB() as any;
+    const nowIso = new Date().toISOString();
     const newMsg = {
-      id: `msg-${Date.now()}`,
+      id: dbService.generateId('MSG'),
+      id_conversation: activeConversation.id,
+      id_percakapan: activeConversation.id,
       conversationId: activeConversation.id,
+      id_pengirim: currentUser.id,
       senderId: currentUser.id,
       senderName: currentUser.nama || currentUser.name || 'Saya',
+      teks: content,
       text: content,
       content,
-      createdAt: new Date().toISOString(),
+      waktu: nowIso,
+      createdAt: nowIso,
+      status_baca: false,
+      ...(extraMeta || {}),
     };
 
-    const updatedConversations = allConversations.map((conv: any) => {
+    const updatedConversations = (latestDB.conversations || []).map((conv: any) => {
       if (String(conv.id) !== String(activeConversation.id)) return conv;
       const existingMsgs = Array.isArray(conv.messages) ? conv.messages : [];
       return {
         ...conv,
         messages: [...existingMsgs, newMsg],
+        pesan_terakhir: content,
         lastMessage: content,
-        updatedAt: newMsg.createdAt,
+        updatedAt: nowIso,
       };
     });
 
-    const updatedGlobalMessages = Array.isArray(db.messages)
-      ? [...db.messages, newMsg]
-      : undefined;
+    const updatedGlobalMessages = Array.isArray(latestDB.messages)
+      ? [...latestDB.messages, newMsg]
+      : [newMsg];
 
     persistDB({
-      ...db,
+      ...latestDB,
       conversations: updatedConversations,
-      ...(updatedGlobalMessages ? { messages: updatedGlobalMessages } : {}),
+      messages: updatedGlobalMessages,
     });
 
     if (!customText) setMessageText('');
   };
 
-  // Menyepakati transaksi dari obrolan -> otomatis tercatat ke OrdersPage
+  // Hitung rekomendasi titik COD via Geolocation Browser -> API (/api/chat/recommend-cod) atau fallback Haversine lokal
+  const handleRecommendCodSpot = () => {
+    if (!activeConversation || isRecommendingCod) return;
+    setCodError('');
+
+    if (!('geolocation' in navigator)) {
+      setCodError('Browser tidak mendukung fitur lokasi GPS.');
+      return;
+    }
+
+    setIsRecommendingCod(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const myCoord = {
+            lat: Number(pos.coords.latitude.toFixed(6)),
+            lng: Number(pos.coords.longitude.toFixed(6)),
+          };
+
+          const latestDB = dbService.getDB() as any;
+          const conv = (latestDB.conversations || []).find(
+            (c: any) => String(c.id) === String(activeConversation.id)
+          );
+          if (!conv) return;
+
+          const userAId = String(conv.id_user_a ?? conv.buyerId ?? conv.participants?.[0] ?? uid);
+          const isUserA = userAId === uid;
+
+          const coordA = isUserA ? myCoord : conv.koordinat_a;
+          const coordB = !isUserA ? myCoord : conv.koordinat_b;
+
+          // Simpan koordinat secara privat hanya pada percakapan ini (tidak bocor ke publik)
+          const updatedConvsWithCoord = (latestDB.conversations || []).map((c: any) =>
+            String(c.id) === String(conv.id)
+              ? {
+                  ...c,
+                  ...(isUserA ? { koordinat_a: myCoord } : { koordinat_b: myCoord }),
+                }
+              : c
+          );
+          persistDB({ ...latestDB, conversations: updatedConvsWithCoord });
+
+          const relatedItem = resolveConversationItem(conv);
+          const itemName =
+            relatedItem?.nama || relatedItem?.title || conv.itemTitle || 'Barang Mahasiswa';
+          const itemCategory = relatedItem?.kategori || 'Umum';
+
+          let recPayload: any = null;
+          const apiBase = (import.meta as any).env?.VITE_API_URL?.replace(/\/$/, '');
+
+          if (API_ENABLED && apiBase) {
+            try {
+              const token = getToken();
+              const res = await fetch(`${apiBase}/api/chat/recommend-cod`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({
+                  coordA,
+                  coordB,
+                  itemName,
+                  itemCategory,
+                }),
+              });
+              if (res.ok) {
+                recPayload = await res.json();
+              }
+            } catch {
+              /* fallback ke kalkulasi Haversine lokal */
+            }
+          }
+
+          if (!recPayload) {
+            const ptA = coordA || myCoord;
+            const ptB = coordB || myCoord;
+            const hasBoth = Boolean(coordA && coordB);
+            const midLat = (ptA.lat + ptB.lat) / 2;
+            const midLng = (ptA.lng + ptB.lng) / 2;
+            const userDistanceKm = hasBoth
+              ? Number(haversineDistanceKm(ptA.lat, ptA.lng, ptB.lat, ptB.lng).toFixed(2))
+              : null;
+
+            const candidatePool = POPULAR_COD_SPOTS.length ? POPULAR_COD_SPOTS : UNNES_LOCATIONS;
+            const rankedSpots = candidatePool
+              .map((spot) => ({
+                id: spot.id,
+                name: spot.name,
+                lat: spot.lat,
+                lng: spot.lng,
+                desc: spot.description,
+                distMidKm: Number(haversineDistanceKm(midLat, midLng, spot.lat, spot.lng).toFixed(2)),
+                distAKm: coordA
+                  ? Number(haversineDistanceKm(coordA.lat, coordA.lng, spot.lat, spot.lng).toFixed(2))
+                  : null,
+                distBKm: coordB
+                  ? Number(haversineDistanceKm(coordB.lat, coordB.lng, spot.lat, spot.lng).toFixed(2))
+                  : null,
+              }))
+              .sort((a, b) => a.distMidKm - b.distMidKm)
+              .slice(0, 3);
+
+            const topSpot = rankedSpots[0];
+            recPayload = {
+              source: 'haversine-local',
+              userDistanceKm,
+              spots: rankedSpots,
+              recommendedSpot: topSpot,
+              advice: hasBoth
+                ? `Jarak kalian sekitar ${userDistanceKm} km. Titik tengah paling adil dan aman untuk COD adalah ${topSpot.name} (${topSpot.desc}).`
+                : `Lokasi kamu sudah dibagikan. Rekomendasi titik COD terdekat dari posisimu adalah ${topSpot.name} (${topSpot.desc}).`,
+            };
+          }
+
+          const top = recPayload.recommendedSpot;
+          handleSendMessage(
+            `📍 Rekomendasi Titik COD: ${top.name} (±${top.distMidKm} km dari titik tengah). ${recPayload.advice}`,
+            {
+              type: 'cod_recommendation',
+              codMeta: recPayload,
+            }
+          );
+        } finally {
+          setIsRecommendingCod(false);
+        }
+      },
+      (err) => {
+        setIsRecommendingCod(false);
+        if (err.code === err.PERMISSION_DENIED) {
+          setCodError('Izin lokasi ditolak. Aktifkan izin lokasi di browser untuk rekomendasi titik COD.');
+        } else {
+          setCodError('Gagal mendapatkan lokasi GPS perangkat. Coba lagi.');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  const handleSelectCodSpotFromCard = (spotName: string, spotCoords?: { lat: number; lng: number }) => {
+    if (!activeConversation) return;
+    const latestDB = dbService.getDB() as any;
+    const updatedConvs = (latestDB.conversations || []).map((c: any) =>
+      String(c.id) === String(activeConversation.id)
+        ? {
+            ...c,
+            lokasi_cod_disepakati: spotName,
+            codLocation: spotName,
+            ...(spotCoords ? { codCoordinates: spotCoords } : {}),
+          }
+        : c
+    );
+    persistDB({ ...latestDB, conversations: updatedConvs });
+    handleSendMessage(`📌 Saya setuju titik temu COD di: ${spotName}`);
+  };
+
+  // Menyepakati transaksi dari obrolan tanpa stale closure
   const handleConfirmDealFromChat = () => {
     if (!activeConversation) return;
-    const partner = resolvePartner(activeConversation);
-    const relatedItem = resolveConversationItem(activeConversation);
+    const latestDB = dbService.getDB() as any;
+    const freshConv = (latestDB.conversations || []).find(
+      (c: any) => String(c.id) === String(activeConversation.id)
+    );
+    if (!freshConv || freshConv.dealConfirmed) return;
+
+    const partner = resolvePartner(freshConv);
+    const relatedItem = resolveConversationItem(freshConv);
+
+    // Cari tawaran barter terakhir di obrolan jika ada
+    const msgs = getConversationMessages(freshConv);
+    const lastBarterMsg = [...msgs].reverse().find((m: any) => m.barterOffer || m.offerMeta);
+    const barterData = lastBarterMsg?.barterOffer || lastBarterMsg?.offerMeta;
+
     const isBarter = Boolean(
-      activeConversation.type === 'barter' ||
-        activeConversation.barterOfferItem ||
-        activeConversation.offeredItemTitle
+      barterData ||
+        freshConv.type === 'barter' ||
+        freshConv.barterOfferItem ||
+        freshConv.offeredItemTitle
     );
 
     const itemTitle =
+      barterData?.targetItemTitle ||
+      barterData?.targetItemName ||
+      relatedItem?.nama ||
       relatedItem?.title ||
-      relatedItem?.nama_barang ||
-      activeConversation.itemTitle ||
+      freshConv.itemTitle ||
       'Barang Kesepakatan Chat';
 
+    const itemOwnerId = String(
+      relatedItem?.id_pemilik ?? relatedItem?.ownerId ?? freshConv.sellerId ?? partner.id
+    );
+    const isCurrentUserSeller = itemOwnerId === uid;
+
+    const buyerId = isCurrentUserSeller ? partner.id : uid;
+    const buyerName = isCurrentUserSeller
+      ? partner.name
+      : currentUser.nama || currentUser.name || 'Pembeli';
+    const sellerId = isCurrentUserSeller ? uid : partner.id;
+    const sellerName = isCurrentUserSeller
+      ? currentUser.nama || currentUser.name || 'Penjual'
+      : partner.name;
+
+    const agreedCod =
+      freshConv.lokasi_cod_disepakati ||
+      freshConv.codLocation ||
+      barterData?.codLocation ||
+      relatedItem?.lokasi ||
+      'Gerbang Utama UNNES (Sekaran)';
+
     addOrderTransaction({
-      userId: currentUser.id,
-      sellerId: partner.id,
-      sellerName: partner.name,
+      userId: buyerId,
+      buyerName,
+      sellerId,
+      sellerName,
       itemTitle,
-      itemImage: relatedItem?.image || relatedItem?.foto || activeConversation.itemImage,
+      itemImage: relatedItem?.foto || relatedItem?.image || freshConv.itemImage,
       type: isBarter ? 'barter' : 'beli',
-      price: Number(relatedItem?.price || relatedItem?.harga || activeConversation.price || 0),
+      price: Number(
+        barterData?.targetItemPrice ?? relatedItem?.harga ?? relatedItem?.price ?? freshConv.itemPrice ?? 0
+      ),
       barterOfferTitle:
-        activeConversation.offeredItemTitle ||
-        activeConversation.barterOfferItem?.title ||
+        barterData?.offeredItemTitle ||
+        barterData?.offeredItemName ||
+        freshConv.offeredItemTitle ||
         'Barang Sesuai Kesepakatan Chat',
-      codLocation: 'Sekitar Kampus UNNES Sekaran (Sesuai Chat)',
+      codLocation: agreedCod,
+      ...(freshConv.codCoordinates ? { codCoordinates: freshConv.codCoordinates } : {}),
     });
 
-    const updatedConversations = allConversations.map((conv: any) =>
-      String(conv.id) === String(activeConversation.id)
+    const updatedConversations = (latestDB.conversations || []).map((conv: any) =>
+      String(conv.id) === String(freshConv.id)
         ? { ...conv, dealConfirmed: true }
         : conv
     );
-    persistDB({ ...db, conversations: updatedConversations });
+    persistDB({ ...latestDB, conversations: updatedConversations });
 
     handleSendMessage(
-      `✅ Transaksi disepakati! Pesanan "${itemTitle}" sudah tercatat di menu Transaksi.`
+      `✅ Transaksi disepakati! Pesanan "${itemTitle}" (COD: ${agreedCod}) sudah tercatat di menu Transaksi.`
     );
   };
 
@@ -250,7 +469,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
     const q = searchTerm.toLowerCase();
     return (
       partner.name.toLowerCase().includes(q) ||
-      String(item?.title || item?.nama_barang || conv.itemTitle || '')
+      String(item?.nama || item?.title || conv.itemTitle || '')
         .toLowerCase()
         .includes(q)
     );
@@ -298,7 +517,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                 const msgs = getConversationMessages(conv);
                 const lastMsg =
                   msgs[msgs.length - 1]?.text ||
-                  msgs[msgs.length - 1]?.content ||
+                  msgs[msgs.length - 1]?.teks ||
                   conv.lastMessage ||
                   'Mulai percakapan...';
                 const isSelected = String(conv.id) === String(selectedConvId);
@@ -329,7 +548,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                       </div>
                       {(item || conv.itemTitle) && (
                         <p className="text-[11px] font-medium text-emerald-700 truncate">
-                          📦 {item?.title || item?.nama_barang || conv.itemTitle}
+                          📦 {item?.nama || item?.title || conv.itemTitle}
                         </p>
                       )}
                       <p className="text-xs text-gray-500 truncate mt-0.5">{lastMsg}</p>
@@ -385,27 +604,50 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                               </span>
                             )}
                           </div>
-                          <p className="text-[11px] text-gray-500">Negosiasi & Koordinasi COD</p>
+                          <p className="text-[11px] text-gray-500 truncate">
+                            {activeConversation.lokasi_cod_disepakati
+                              ? `📍 COD: ${activeConversation.lokasi_cod_disepakati}`
+                              : 'Negosiasi & Koordinasi COD'}
+                          </p>
                         </div>
                       </div>
 
-                      {!activeConversation.dealConfirmed ? (
+                      <div className="flex items-center gap-1.5 shrink-0">
                         <button
-                          onClick={handleConfirmDealFromChat}
-                          className="px-3 py-1.5 rounded-xl text-xs font-bold text-white shrink-0 shadow-sm hover:opacity-90"
-                          style={{ background: 'var(--color-primary, #567257)' }}
+                          type="button"
+                          onClick={handleRecommendCodSpot}
+                          disabled={isRecommendingCod}
+                          title="Bagikan lokasi GPS & cari titik tengah COD cerdas"
+                          className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 disabled:opacity-50"
                         >
-                          Sepakati Deal
+                          {isRecommendingCod ? 'Mencari...' : '📍 Titik COD'}
                         </button>
-                      ) : (
-                        <button
-                          onClick={() => go('orders')}
-                          className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0"
-                        >
-                          Lihat Transaksi ✓
-                        </button>
-                      )}
+
+                        {!activeConversation.dealConfirmed ? (
+                          <button
+                            onClick={handleConfirmDealFromChat}
+                            className="px-3 py-1.5 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-90"
+                            style={{ background: 'var(--color-primary, #567257)' }}
+                          >
+                            Sepakati Deal
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => go('orders')}
+                            className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          >
+                            Transaksi ✓
+                          </button>
+                        )}
+                      </div>
                     </div>
+
+                    {codError && (
+                      <div className="px-4 py-1.5 bg-red-50 border-t border-red-100 text-[11px] text-red-600 flex items-center justify-between">
+                        <span>{codError}</span>
+                        <button onClick={() => setCodError('')} className="font-bold ml-2">✕</button>
+                      </div>
+                    )}
 
                     {/* Banner Barang yang Dibahas */}
                     {(relatedItem || activeConversation.itemTitle) && (
@@ -413,8 +655,8 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                         <div className="flex items-center gap-2.5 min-w-0">
                           <img
                             src={
-                              relatedItem?.image ||
                               relatedItem?.foto ||
+                              relatedItem?.image ||
                               activeConversation.itemImage ||
                               '/assets/seed-images/placeholder.svg'
                             }
@@ -423,13 +665,13 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                           />
                           <div className="min-w-0">
                             <p className="text-xs font-bold text-gray-800 truncate">
-                              {relatedItem?.title ||
-                                relatedItem?.nama_barang ||
+                              {relatedItem?.nama ||
+                                relatedItem?.title ||
                                 activeConversation.itemTitle}
                             </p>
                             <p className="text-[11px] text-gray-500">
-                              {Number(relatedItem?.price || relatedItem?.harga || 0) > 0
-                                ? `Rp ${Number(relatedItem?.price || relatedItem?.harga).toLocaleString('id-ID')}`
+                              {Number(relatedItem?.harga || relatedItem?.price || 0) > 0
+                                ? `Rp ${Number(relatedItem?.harga || relatedItem?.price).toLocaleString('id-ID')}`
                                 : 'Mode Pertukaran / Barter'}
                             </p>
                           </div>
@@ -449,7 +691,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
               })()}
 
               {/* Daftar Gelembung Pesan */}
-              <div className="flex-1 p-4 overflow-y-auto space-y-2.5 max-h-[50vh] md:max-h-[54vh]">
+              <div className="flex-1 p-4 overflow-y-auto space-y-3 max-h-[50vh] md:max-h-[54vh]">
                 {activeMessages.length === 0 ? (
                   <p className="text-center text-xs text-gray-400 py-8">
                     Belum ada pesan. Kirim sapaan atau pilih template pesan di bawah untuk memulai.
@@ -457,12 +699,14 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                 ) : (
                   activeMessages.map((msg: any, index: number) => {
                     const sender = String(
-                      msg.senderId ?? msg.sender_id ?? msg.id_user ?? msg.from ?? ''
+                      msg.senderId ?? msg.id_pengirim ?? msg.sender_id ?? msg.id_user ?? ''
                     );
                     const isMine = sender === uid;
-                    const text = msg.text || msg.content || '';
-                    const timeStr = msg.createdAt || msg.timestamp
-                      ? new Date(msg.createdAt || msg.timestamp).toLocaleTimeString('id-ID', {
+                    const text = msg.text || msg.teks || msg.content || '';
+                    const barterOffer = msg.barterOffer || msg.offerMeta;
+                    const codMeta = msg.codMeta;
+                    const timeStr = msg.createdAt || msg.waktu || msg.timestamp
+                      ? new Date(msg.createdAt || msg.waktu || msg.timestamp).toLocaleTimeString('id-ID', {
                           hour: '2-digit',
                           minute: '2-digit',
                         })
@@ -473,6 +717,111 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                         key={msg.id || index}
                         className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}
                       >
+                        {/* Kartu Pengajuan Barter & Selisih Harga Otomatis */}
+                        {barterOffer && (
+                          <div className="max-w-[88%] sm:max-w-[78%] mb-1.5 rounded-2xl bg-amber-50 border border-amber-200 p-3.5 text-xs space-y-2 shadow-xs">
+                            <div className="flex items-center justify-between gap-2 border-b border-amber-200/70 pb-1.5">
+                              <span className="font-bold text-amber-900">⇄ Penawaran Barter</span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-200/70 text-amber-900 font-bold">
+                                Kalkulasi Otomatis
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-1.5 text-[11px]">
+                              <div className="bg-white/80 p-2 rounded-xl border border-amber-100">
+                                <span className="text-gray-500 block">Barang Ditawarkan:</span>
+                                <span className="font-bold text-gray-900">
+                                  {barterOffer.offeredItemTitle || barterOffer.offeredItemName}
+                                </span>
+                                <span className="text-amber-800 font-semibold block">
+                                  Rp {Number(barterOffer.offeredItemPrice || 0).toLocaleString('id-ID')}
+                                </span>
+                              </div>
+                              <div className="bg-white/80 p-2 rounded-xl border border-amber-100">
+                                <span className="text-gray-500 block">Barang Target:</span>
+                                <span className="font-bold text-gray-900">
+                                  {barterOffer.targetItemTitle || barterOffer.targetItemName}
+                                </span>
+                                <span className="text-emerald-800 font-semibold block">
+                                  Rp {Number(barterOffer.targetItemPrice || 0).toLocaleString('id-ID')}
+                                </span>
+                              </div>
+                            </div>
+
+                            {(() => {
+                              const diff = Number(
+                                barterOffer.priceDifference ?? barterOffer.priceDiff ?? 0
+                              );
+                              return (
+                                <div className="p-2 rounded-xl bg-white border border-amber-200 flex items-center justify-between font-bold text-[11px]">
+                                  <span className="text-gray-700">Selisih Harga:</span>
+                                  <span className="text-amber-900">
+                                    {diff > 0
+                                      ? `Penawar nambah Rp ${diff.toLocaleString('id-ID')}`
+                                      : diff < 0
+                                      ? `Penjual nambah Rp ${Math.abs(diff).toLocaleString('id-ID')}`
+                                      : 'Impas (Rp 0)'}
+                                  </span>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
+
+                        {/* Kartu Rekomendasi Titik COD (Haversine + Gemini + OSM) */}
+                        {codMeta && codMeta.recommendedSpot && (
+                          <div className="max-w-[92%] sm:max-w-[82%] mb-1.5 rounded-2xl bg-white border border-blue-200 p-3.5 text-xs space-y-2.5 shadow-xs">
+                            <div className="flex items-center justify-between gap-2 border-b border-blue-100 pb-1.5">
+                              <span className="font-bold text-blue-900">
+                                📍 Rekomendasi Titik COD
+                              </span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-semibold">
+                                {codMeta.source?.includes('gemini') ? 'AI + Haversine' : 'Haversine'}
+                              </span>
+                            </div>
+
+                            <p className="text-gray-700 leading-relaxed">{codMeta.advice}</p>
+
+                            <OsmMapEmbed
+                              locationName={codMeta.recommendedSpot.name}
+                              coordinates={{
+                                lat: codMeta.recommendedSpot.lat,
+                                lng: codMeta.recommendedSpot.lng,
+                              }}
+                              height={150}
+                            />
+
+                            {Array.isArray(codMeta.spots) && codMeta.spots.length > 0 && (
+                              <div className="space-y-1.5 pt-1">
+                                <p className="text-[10px] font-bold text-gray-500 uppercase">
+                                  Pilih & Sepakati Titik Temu:
+                                </p>
+                                {codMeta.spots.map((sp: any) => (
+                                  <button
+                                    key={sp.id}
+                                    type="button"
+                                    onClick={() =>
+                                      handleSelectCodSpotFromCard(sp.name, {
+                                        lat: sp.lat,
+                                        lng: sp.lng,
+                                      })
+                                    }
+                                    className="w-full text-left p-2 rounded-xl border border-gray-200 hover:border-emerald-500 hover:bg-emerald-50/50 transition-colors flex items-center justify-between gap-2"
+                                  >
+                                    <div className="min-w-0">
+                                      <p className="font-bold text-gray-900 truncate">{sp.name}</p>
+                                      <p className="text-[10px] text-gray-500 truncate">{sp.desc}</p>
+                                    </div>
+                                    <span className="text-[10px] font-bold text-emerald-700 shrink-0">
+                                      {sp.distMidKm} km →
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         <div
                           className={`max-w-[80%] px-3.5 py-2.5 rounded-2xl text-xs leading-relaxed ${
                             isMine
