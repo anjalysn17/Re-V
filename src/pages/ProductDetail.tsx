@@ -2,10 +2,11 @@ import { useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import * as dbService from '../services/db';
 import { addOrderTransaction } from './OrdersPage';
-import OsmMapEmbed, {
-  MapCoordinates,
-  resolveLocationCoordinates,
-} from '../components/OsmMapEmbed';
+import {
+  UNNES_LOCATIONS,
+  DEFAULT_LOCATION_ID,
+  getGroupedLocations,
+} from '../constants/locations';
 
 interface ProductDetailProps {
   productId?: string;
@@ -14,7 +15,6 @@ interface ProductDetailProps {
   onCartUpdated?: () => void;
 }
 
-// 5 Kategori baku sesuai kontrak PAKEM.md
 const ITEM_CATEGORIES = [
   'Elektronik',
   'Buku & Alat Tulis',
@@ -25,34 +25,11 @@ const ITEM_CATEGORIES = [
 
 const ITEM_CONDITIONS = [
   'Baru',
-  'Bekas - Seperti Baru',
-  'Bekas - Sangat Baik',
-  'Bekas - Baik',
+  'Grade A (Seperti Baru)',
+  'Grade B (Bekas Layak Pakai)',
+  'Grade C (Bekas dengan Cacat Minor)',
 ] as const;
 
-// Konfigurasi lokasi area kampus & titik aman COD
-export const CAMPUS_LOCATIONS = [
-  'Sekaran (Gerbang Utama UNNES)',
-  'Taman FMIPA UNNES',
-  'Masjid Ulul Albab UNNES',
-  'Perpustakaan Pusat UNNES',
-  'Area Fakultas (FBS / FIP / FIS / FT / FIK / FE / FH)',
-  'Indomaret Point Sekaran Raya',
-  'Patemon, Gunungpati',
-  'Banaran, Gunungpati',
-  'Gang Pete / Taman Siswa Sekaran',
-] as const;
-
-const SAFE_COD_SPOTS = [
-  'Gerbang Utama UNNES (Sekaran)',
-  'Taman FMIPA UNNES',
-  'Masjid Ulul Albab UNNES',
-  'Perpustakaan Pusat UNNES',
-  'Indomaret Point Sekaran Raya',
-  'Pertigaan Patemon Gunungpati',
-];
-
-// Helper sanitasi nominal harga agar tidak terpotong tanda titik/koma ribuan
 function parseCleanPrice(value: unknown): number {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
@@ -75,23 +52,24 @@ export default function ProductDetail({
   onOpenAddItem,
   onCartUpdated,
 }: ProductDetailProps) {
-  const { currentUser, openAuthModal } = useAuth() as any;
+  const { currentUser, openAuthModal } = useAuth();
 
-  const [selectedCodSpot, setSelectedCodSpot] = useState<string>(SAFE_COD_SPOTS[0]);
-  const [showCodMapPreview, setShowCodMapPreview] = useState<boolean>(true);
+  const groupedLocations = getGroupedLocations();
+  const defaultLocObj =
+    UNNES_LOCATIONS.find((l) => l.id === DEFAULT_LOCATION_ID) || UNNES_LOCATIONS[0];
+
+  const [selectedCodSpot, setSelectedCodSpot] = useState<string>(defaultLocObj.name);
   const [isBarterModalOpen, setIsBarterModalOpen] = useState<boolean>(false);
   const [selectedOfferItemId, setSelectedOfferItemId] = useState<string>('');
   const [barterNote, setBarterNote] = useState<string>('');
   const [toastMessage, setToastMessage] = useState<string>('');
 
-  // State Modal Edit Barang (khusus pemilik)
+  // State Modal Edit Barang
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
   const [editTitle, setEditTitle] = useState<string>('');
   const [editCategory, setEditCategory] = useState<string>(ITEM_CATEGORIES[0]);
-  const [editCondition, setEditCondition] = useState<string>(ITEM_CONDITIONS[2]);
-  const [editLocation, setEditLocation] = useState<string>(CAMPUS_LOCATIONS[0]);
-  const [editCoordinates, setEditCoordinates] = useState<MapCoordinates | null>(null);
-  const [isLocatingGps, setIsLocatingGps] = useState<boolean>(false);
+  const [editCondition, setEditCondition] = useState<string>(ITEM_CONDITIONS[1]);
+  const [editLocation, setEditLocation] = useState<string>(defaultLocObj.name);
   const [editTransactionType, setEditTransactionType] = useState<'jual' | 'barter' | 'keduanya'>('jual');
   const [editPriceInput, setEditPriceInput] = useState<string>('');
   const [editWantedItem, setEditWantedItem] = useState<string>('');
@@ -102,7 +80,6 @@ export default function ProductDetail({
   const allItems: any[] = db.items || [];
   const allUsers: any[] = db.users || [];
 
-  // Ambil detail produk berdasarkan productId (fallback ke item pertama jika tidak ada)
   const rawItem = useMemo(() => {
     if (!allItems.length) return null;
     if (productId) {
@@ -112,7 +89,6 @@ export default function ProductDetail({
     return allItems[0];
   }, [allItems, productId]);
 
-  // Daftar barang milik user yang sedang login untuk opsi barter (Hook harus di atas early return)
   const myBarterItems = useMemo(() => {
     if (!currentUser || !rawItem) return [];
     return allItems.filter((it) => {
@@ -131,7 +107,6 @@ export default function ProductDetail({
     setTimeout(() => setToastMessage(''), 3500);
   };
 
-  // Simpan selalu via dbService.saveDB agar key `jualbeliDB` dan sync backend berjalan konsisten
   const persistDB = (updatedDB: any) => {
     dbService.saveDB(updatedDB);
   };
@@ -145,6 +120,7 @@ export default function ProductDetail({
             Barang yang kamu cari mungkin sudah terjual, selesai dibarter, atau dihapus oleh pemiliknya.
           </p>
           <button
+            type="button"
             onClick={() => onNavigate('home')}
             className="px-5 py-2.5 rounded-xl text-xs font-bold text-white"
             style={{ background: 'var(--color-primary, #567257)' }}
@@ -156,7 +132,6 @@ export default function ProductDetail({
     );
   }
 
-  // Normalisasi properti barang (membaca field asli PAKEM.md + alias server)
   const rawStatus = String(rawItem.status || '').toLowerCase();
   const isSold = rawStatus === 'sold' || Boolean(rawItem.terjual);
 
@@ -177,9 +152,8 @@ export default function ProductDetail({
       'Barang masih sangat layak pakai, siap COD di area sekitar kampus UNNES Gunungpati.',
     price: parseCleanPrice(rawItem.harga ?? rawItem.price ?? 0),
     category: rawItem.kategori || rawItem.category || 'Perlengkapan',
-    condition: rawItem.kondisi || rawItem.condition || 'Bekas - Sangat Baik',
-    location: rawItem.lokasi || rawItem.location || 'Sekaran (Gerbang Utama UNNES)',
-    coordinates: (rawItem.koordinat || rawItem.coordinates || null) as MapCoordinates | null,
+    condition: rawItem.kondisi || rawItem.condition || ITEM_CONDITIONS[1],
+    location: rawItem.lokasi || rawItem.location || defaultLocObj.name,
     image: rawItem.foto || rawItem.image || '/assets/seed-images/placeholder.svg',
     ownerId: rawItem.id_pemilik ?? rawItem.id_user ?? rawItem.sellerId ?? rawItem.ownerId ?? 'USR-001',
     transactionMode: normalizedMode,
@@ -189,8 +163,7 @@ export default function ProductDetail({
   const seller = allUsers.find((u) => String(u.id) === String(item.ownerId));
   const sellerName =
     seller?.nama || seller?.name || rawItem.sellerName || rawItem.ownerName || 'Mahasiswa UNNES';
-  const isSellerVerified =
-    Boolean(seller?.is_verified) || (seller?.email || '').toLowerCase().includes('unnes.ac.id');
+  const isSellerVerified = Boolean(seller?.is_verified);
 
   const isOwnItem = Boolean(currentUser && String(currentUser.id) === String(item.ownerId));
 
@@ -205,7 +178,15 @@ export default function ProductDetail({
     item.transactionMode.includes('barter') ||
     Boolean(rawItem.canBarter);
 
-  // Buka modal edit barang dengan data terisi otomatis
+  // Kalkulasi selisih harga otomatis untuk preview di modal barter
+  const selectedOfferItem = myBarterItems.find(
+    (it) => String(it.id) === String(selectedOfferItemId)
+  );
+  const selectedOfferPrice = selectedOfferItem
+    ? parseCleanPrice(selectedOfferItem.harga ?? selectedOfferItem.price ?? 0)
+    : 0;
+  const priceDiff = item.price - selectedOfferPrice;
+
   const handleOpenEditModal = () => {
     setEditTitle(item.title);
     setEditCategory(
@@ -213,7 +194,6 @@ export default function ProductDetail({
     );
     setEditCondition(item.condition);
     setEditLocation(item.location);
-    setEditCoordinates(item.coordinates);
 
     const initialOfferType: 'jual' | 'barter' | 'keduanya' = isBothMode
       ? 'keduanya'
@@ -228,31 +208,6 @@ export default function ProductDetail({
     setIsEditModalOpen(true);
   };
 
-  // Ambil koordinat GPS browser untuk titik lokasi barang
-  const handleUseCurrentGps = () => {
-    if (!navigator.geolocation) {
-      alert('Browser kamu tidak mendukung fitur GPS / Geolocation.');
-      return;
-    }
-    setIsLocatingGps(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setEditCoordinates({
-          lat: Number(pos.coords.latitude.toFixed(6)),
-          lng: Number(pos.coords.longitude.toFixed(6)),
-        });
-        setIsLocatingGps(false);
-        showToast('Titik koordinat GPS berhasil diterapkan!');
-      },
-      () => {
-        setIsLocatingGps(false);
-        alert('Gagal mengakses lokasi GPS. Pastikan izin lokasi browser sudah diaktifkan.');
-      },
-      { enableHighAccuracy: true, timeout: 8000 }
-    );
-  };
-
-  // Simpan perubahan barang (memperbarui field asli PAKEM.md & seluruh alias server)
   const handleSaveEditItem = () => {
     const trimmedTitle = editTitle.trim();
     if (!trimmedTitle) {
@@ -266,27 +221,23 @@ export default function ProductDetail({
       return;
     }
 
-    const finalCoordinates = resolveLocationCoordinates(editLocation, editCoordinates);
-
     const latestDB = dbService.getDB() as any;
     const updatedItems = (latestDB.items || []).map((it: any) => {
       if (String(it.id) !== String(item.id)) return it;
 
       const nextStatus = editIsSold ? 'sold' : editTransactionType;
+      const { koordinat: _dropCoords, ...restIt } = it;
       return {
-        ...it,
-        // Field asli PAKEM.md
+        ...restIt,
         nama: trimmedTitle,
         deskripsi: editDescription.trim() || it.deskripsi,
         harga: cleanPrice,
         kategori: editCategory,
         kondisi: editCondition,
         lokasi: editLocation,
-        koordinat: finalCoordinates,
         status: nextStatus,
         terjual: editIsSold,
         barang_dicari: editWantedItem.trim(),
-        // Alias yang dipakai halaman lain & backend
         title: trimmedTitle,
         nama_barang: trimmedTitle,
         description: editDescription.trim() || it.description,
@@ -309,13 +260,16 @@ export default function ProductDetail({
     showToast('Perubahan barang berhasil disimpan!');
   };
 
-  // Helper membuat/membuka ruang chat agar terhubung dengan ChatPage & policy.js
-  const createOrOpenChatRoom = (initialText?: string): string => {
+  // Helper membuat/membuka ruang chat & mengirim pesan (termasuk metadata barter)
+  const createOrOpenChatRoom = (
+    initialText?: string,
+    extraMessageData?: Record<string, any>
+  ): string => {
     const latestDB = dbService.getDB() as any;
     const conversations: any[] = [...(latestDB.conversations || [])];
     const messages: any[] = [...(latestDB.messages || [])];
 
-    const buyerId = String(currentUser.id);
+    const buyerId = String(currentUser!.id);
     const sellerId = String(item.ownerId);
 
     let existingConv = conversations.find((c) => {
@@ -331,7 +285,7 @@ export default function ProductDetail({
 
     const convId = existingConv
       ? String(existingConv.id)
-      : dbService.generateId('CONV', conversations);
+      : dbService.generateId('CONV');
 
     const nowIso = new Date().toISOString();
     const previewMsg = initialText || `Halo, saya tertarik dengan ${item.title}`;
@@ -344,35 +298,44 @@ export default function ProductDetail({
         id_penjual: sellerId,
         buyerId,
         sellerId,
-        buyerName: currentUser.nama || currentUser.name || 'Saya',
+        buyerName: currentUser!.nama || (currentUser as any).name || 'Saya',
         sellerName,
         id_barang: item.id,
         itemId: item.id,
         itemTitle: item.title,
         itemImage: item.image,
+        itemPrice: item.price,
         pesan_terakhir: previewMsg,
         lastMessage: previewMsg,
         updatedAt: nowIso,
       };
       conversations.unshift(existingConv);
-    } else if (initialText) {
-      existingConv.pesan_terakhir = initialText;
-      existingConv.lastMessage = initialText;
+    } else {
+      existingConv.id_barang = item.id;
+      existingConv.itemId = item.id;
+      existingConv.itemTitle = item.title;
+      existingConv.itemImage = item.image;
+      existingConv.itemPrice = item.price;
+      if (initialText) {
+        existingConv.pesan_terakhir = initialText;
+        existingConv.lastMessage = initialText;
+      }
       existingConv.updatedAt = nowIso;
     }
 
     if (initialText) {
       messages.push({
-        id: dbService.generateId('MSG', messages),
+        id: dbService.generateId('MSG'),
         id_percakapan: convId,
         conversationId: convId,
         id_pengirim: buyerId,
         senderId: buyerId,
-        senderName: currentUser.nama || currentUser.name || 'Saya',
+        senderName: currentUser!.nama || (currentUser as any).name || 'Saya',
         isi: initialText,
         text: initialText,
         waktu: nowIso,
         createdAt: nowIso,
+        ...(extraMessageData || {}),
       });
     }
 
@@ -385,7 +348,6 @@ export default function ProductDetail({
     return convId;
   };
 
-  // 1. Aksi Tambah ke Keranjang
   const handleAddToCart = () => {
     if (!currentUser) {
       openAuthModal('login');
@@ -411,7 +373,7 @@ export default function ProductDetail({
       cart[existingIdx].quantity = nextQty;
     } else {
       cart.push({
-        id: dbService.generateId('CRT', cart),
+        id: dbService.generateId('CRT'),
         id_user: currentUser.id,
         userId: currentUser.id,
         id_barang: item.id,
@@ -436,7 +398,6 @@ export default function ProductDetail({
     showToast('Barang berhasil ditambahkan ke keranjang!');
   };
 
-  // 2. Aksi Beli Langsung (Tercatat langsung ke OrdersPage)
   const handleDirectBuy = () => {
     if (!currentUser) {
       openAuthModal('login');
@@ -468,7 +429,7 @@ export default function ProductDetail({
     setTimeout(() => onNavigate('orders'), 800);
   };
 
-  // 3. Aksi Ajukan Barter (Tercatat ke OrdersPage + ChatPage)
+  // Mengirim pengajuan barter langsung ke ChatPage lengkap dengan selisih harga otomatis
   const handleConfirmBarter = () => {
     if (!currentUser) {
       openAuthModal('login');
@@ -485,31 +446,49 @@ export default function ProductDetail({
       return;
     }
 
-    const offeredTitle = offeredRaw.nama || offeredRaw.title || offeredRaw.nama_barang || 'Barang Penawaran';
+    const offeredTitle =
+      offeredRaw.nama || offeredRaw.title || offeredRaw.nama_barang || 'Barang Penawaran';
+    const offeredPrice = parseCleanPrice(offeredRaw.harga ?? offeredRaw.price ?? 0);
+    const offeredImage =
+      offeredRaw.foto || offeredRaw.image || '/assets/seed-images/placeholder.svg';
+    const diff = item.price - offeredPrice;
 
-    addOrderTransaction({
-      userId: currentUser.id,
-      sellerId: String(item.ownerId),
-      sellerName,
-      itemTitle: item.title,
-      itemImage: item.image,
-      type: 'barter',
-      barterOfferTitle: offeredTitle,
-      codLocation: selectedCodSpot,
-    });
+    const diffSummary =
+      diff > 0
+        ? `Estimasi selisih: +Rp ${diff.toLocaleString('id-ID')} (pengaju menambah)`
+        : diff < 0
+        ? `Estimasi selisih: -Rp ${Math.abs(diff).toLocaleString('id-ID')} (barang penawar lebih mahal)`
+        : 'Estimasi selisih: Rp 0 (nilai seimbang)';
 
     const noteText = barterNote.trim() ? ` Catatan: "${barterNote.trim()}"` : '';
-    const convId = createOrOpenChatRoom(
-      `Halo ${sellerName}, saya mengajukan barter "${offeredTitle}" milik saya untuk ditukar dengan "${item.title}". Titik COD: ${selectedCodSpot}.${noteText}`
-    );
+    const messageText = `Pengajuan Barter: "${offeredTitle}" (Rp ${offeredPrice.toLocaleString(
+      'id-ID'
+    )}) ⇄ "${item.title}" (Rp ${item.price.toLocaleString(
+      'id-ID'
+    )}). ${diffSummary}. Area COD: ${selectedCodSpot}.${noteText}`;
+
+    const convId = createOrOpenChatRoom(messageText, {
+      type: 'barter_offer',
+      barterOffer: {
+        offeredItemId: String(offeredRaw.id),
+        offeredItemTitle: offeredTitle,
+        offeredItemPrice: offeredPrice,
+        offeredItemImage: offeredImage,
+        targetItemId: String(item.id),
+        targetItemTitle: item.title,
+        targetItemPrice: item.price,
+        priceDifference: diff,
+        codLocation: selectedCodSpot,
+        note: barterNote.trim(),
+      },
+    });
 
     setIsBarterModalOpen(false);
     setBarterNote('');
-    showToast('Pengajuan barter terkirim & tercatat di Transaksi!');
-    setTimeout(() => onNavigate('chat', convId), 700);
+    showToast('Penawaran barter dikirim ke ruang chat!');
+    onNavigate('chat', convId);
   };
 
-  // 4. Aksi Chat Penjual
   const handleChatSeller = () => {
     if (!currentUser) {
       openAuthModal('login');
@@ -521,26 +500,26 @@ export default function ProductDetail({
     onNavigate('chat', convId);
   };
 
+  const hasCustomEditCondition =
+    Boolean(editCondition) && !(ITEM_CONDITIONS as readonly string[]).includes(editCondition);
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-5 space-y-5">
-      {/* Notifikasi Toast */}
       {toastMessage && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-semibold shadow-lg">
           {toastMessage}
         </div>
       )}
 
-      {/* Tombol Kembali */}
       <button
+        type="button"
         onClick={() => onNavigate('home')}
         className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 hover:text-gray-900 py-1"
       >
         <span>←</span> Kembali ke Katalog
       </button>
 
-      {/* Kontainer Utama Produk */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden grid grid-cols-1 md:grid-cols-2">
-        {/* Foto Barang */}
         <div className="bg-gray-50 relative aspect-square md:aspect-auto md:min-h-[360px]">
           <img
             src={item.image}
@@ -569,7 +548,6 @@ export default function ProductDetail({
           </div>
         </div>
 
-        {/* Informasi & Aksi */}
         <div className="p-5 sm:p-6 flex flex-col justify-between space-y-5">
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
@@ -597,18 +575,9 @@ export default function ProductDetail({
               </p>
             )}
 
-            <div className="space-y-2">
-              <p className="text-xs text-gray-600 flex items-center gap-1.5">
-                <span>📍</span> Lokasi Barang: <strong>{item.location}</strong>
-              </p>
-              {/* Peta OpenStreetMap Embed Lokasi Barang */}
-              <OsmMapEmbed
-                locationName={item.location}
-                coordinates={item.coordinates}
-                label={`Area Barang: ${item.location}`}
-                height={150}
-              />
-            </div>
+            <p className="text-xs text-gray-600 flex items-center gap-1.5">
+              <span>📍</span> Area Barang: <strong>{item.location}</strong>
+            </p>
 
             {canBarter && (
               <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200/70 text-xs">
@@ -627,7 +596,6 @@ export default function ProductDetail({
             </div>
           </div>
 
-          {/* Info Pemilik & Rekomendasi Titik COD */}
           <div className="space-y-4 pt-3 border-t border-gray-100">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
@@ -652,54 +620,38 @@ export default function ProductDetail({
 
               {!isOwnItem && (
                 <button
+                  type="button"
                   onClick={handleChatSeller}
-                  className="px-3 py-2 rounded-xl text-xs font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50"
+                  className="px-3 py-2 rounded-xl text-xs font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50 touch-manipulation"
                 >
                   Chat
                 </button>
               )}
             </div>
 
-            {/* Pilihan Titik Aman COD + Pratinjau Peta Titik Temu */}
             {!isOwnItem && !isSold && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-[11px] font-bold text-gray-700">
-                    Pilih Rekomendasi Titik Aman COD:
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setShowCodMapPreview((prev) => !prev)}
-                    className="text-[11px] font-semibold text-emerald-700 hover:underline"
-                  >
-                    {showCodMapPreview ? 'Sembunyikan Peta COD' : 'Lihat Peta COD'}
-                  </button>
-                </div>
-
+              <div className="space-y-1.5">
+                <label className="block text-[11px] font-bold text-gray-700">
+                  Pilih Area Awal COD (Bisa disesuaikan di Chat):
+                </label>
                 <select
                   value={selectedCodSpot}
                   onChange={(e) => setSelectedCodSpot(e.target.value)}
                   className="w-full px-3 py-2.5 text-xs rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:outline-none focus:border-emerald-600"
                 >
-                  {SAFE_COD_SPOTS.map((spot) => (
-                    <option key={spot} value={spot}>
-                      {spot}
-                    </option>
+                  {groupedLocations.map((group) => (
+                    <optgroup key={group.zone} label={group.zone}>
+                      {group.locations.map((loc) => (
+                        <option key={loc.id} value={loc.name}>
+                          {loc.name}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
-
-                {showCodMapPreview && (
-                  <OsmMapEmbed
-                    locationName={selectedCodSpot}
-                    label={`Titik Temu COD: ${selectedCodSpot}`}
-                    height={135}
-                    zoomDelta={0.0028}
-                  />
-                )}
               </div>
             )}
 
-            {/* Tombol Aksi Transaksi / Aksi Pemilik */}
             {isOwnItem ? (
               <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 space-y-2.5">
                 <p className="text-xs text-gray-600 font-medium text-center">
@@ -707,6 +659,7 @@ export default function ProductDetail({
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   <button
+                    type="button"
                     onClick={handleOpenEditModal}
                     className="py-2.5 px-3 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-95"
                     style={{ background: 'var(--color-primary, #567257)' }}
@@ -714,6 +667,7 @@ export default function ProductDetail({
                     Edit Barang
                   </button>
                   <button
+                    type="button"
                     onClick={() => onNavigate('my-items')}
                     className="py-2.5 px-3 rounded-xl text-xs font-bold border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
                   >
@@ -732,14 +686,16 @@ export default function ProductDetail({
                 {canBuy && (
                   <>
                     <button
+                      type="button"
                       onClick={handleAddToCart}
-                      className="py-3 px-4 rounded-xl text-xs font-bold border border-gray-300 text-gray-800 hover:bg-gray-50 active:scale-[0.99] transition-all"
+                      className="py-3 px-4 rounded-xl text-xs font-bold border border-gray-300 text-gray-800 hover:bg-gray-50 active:scale-[0.99] transition-all touch-manipulation"
                     >
                       + Keranjang
                     </button>
                     <button
+                      type="button"
                       onClick={handleDirectBuy}
-                      className="py-3 px-4 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-95 active:scale-[0.99] transition-all"
+                      className="py-3 px-4 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-95 active:scale-[0.99] transition-all touch-manipulation"
                       style={{ background: 'var(--color-primary, #567257)' }}
                     >
                       Beli Langsung (COD)
@@ -749,6 +705,7 @@ export default function ProductDetail({
 
                 {canBarter && (
                   <button
+                    type="button"
                     onClick={() => {
                       if (!currentUser) {
                         openAuthModal('login');
@@ -757,7 +714,7 @@ export default function ProductDetail({
                       setSelectedOfferItemId(myBarterItems[0]?.id ? String(myBarterItems[0].id) : '');
                       setIsBarterModalOpen(true);
                     }}
-                    className={`py-3 px-4 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-95 active:scale-[0.99] transition-all ${
+                    className={`py-3.5 px-4 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-95 active:scale-[0.99] transition-all touch-manipulation ${
                       canBuy ? 'sm:col-span-2' : 'col-span-full'
                     }`}
                     style={{ background: 'var(--color-accent, #D97706)' }}
@@ -771,13 +728,20 @@ export default function ProductDetail({
         </div>
       </div>
 
-      {/* Modal Edit Barang (Untuk Pemilik) */}
+      {/* Modal Edit Barang */}
       {isEditModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <div
+          className="fixed inset-0 z-[60] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setIsEditModalOpen(false)}
+        >
+          <div
+            className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-2xl p-6 pb-8 sm:pb-6 space-y-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-gray-100 pb-3">
               <h3 className="text-base font-bold text-gray-900">Edit Detail Barang</h3>
               <button
+                type="button"
                 onClick={() => setIsEditModalOpen(false)}
                 className="text-gray-400 hover:text-gray-700 text-lg font-bold px-2"
               >
@@ -819,6 +783,9 @@ export default function ProductDetail({
                     onChange={(e) => setEditCondition(e.target.value)}
                     className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-emerald-600"
                   >
+                    {hasCustomEditCondition && (
+                      <option value={editCondition}>{editCondition}</option>
+                    )}
                     {ITEM_CONDITIONS.map((cond) => (
                       <option key={cond} value={cond}>
                         {cond}
@@ -828,49 +795,28 @@ export default function ProductDetail({
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold text-gray-700">
-                    Lokasi Barang / Area Kampus
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleUseCurrentGps}
-                    disabled={isLocatingGps}
-                    className="text-[11px] font-bold text-emerald-700 hover:underline disabled:opacity-50"
-                  >
-                    {isLocatingGps ? 'Mendeteksi GPS...' : '📍 Gunakan GPS Saat Ini'}
-                  </button>
-                </div>
-
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Area Barang / Lokasi COD
+                </label>
                 <select
                   value={editLocation}
-                  onChange={(e) => {
-                    setEditLocation(e.target.value);
-                    setEditCoordinates(null);
-                  }}
+                  onChange={(e) => setEditLocation(e.target.value)}
                   className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-emerald-600"
                 >
-                  {!CAMPUS_LOCATIONS.includes(editLocation as any) && (
+                  {!UNNES_LOCATIONS.some((l) => l.name === editLocation) && (
                     <option value={editLocation}>{editLocation}</option>
                   )}
-                  {CAMPUS_LOCATIONS.map((loc) => (
-                    <option key={loc} value={loc}>
-                      {loc}
-                    </option>
+                  {groupedLocations.map((group) => (
+                    <optgroup key={group.zone} label={group.zone}>
+                      {group.locations.map((loc) => (
+                        <option key={loc.id} value={loc.name}>
+                          {loc.name}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
-
-                <OsmMapEmbed
-                  locationName={editLocation}
-                  coordinates={editCoordinates}
-                  label={
-                    editCoordinates
-                      ? `${editLocation} (GPS: ${editCoordinates.lat}, ${editCoordinates.lng})`
-                      : editLocation
-                  }
-                  height={140}
-                />
               </div>
 
               <div>
@@ -979,23 +925,30 @@ export default function ProductDetail({
         </div>
       )}
 
-      {/* Modal Pengajuan Barter */}
+      {/* Modal Pengajuan Barter (Mobile-friendly z-[60] + Kalkulasi Selisih Harga Otomatis) */}
       {isBarterModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <div
+          className="fixed inset-0 z-[60] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setIsBarterModalOpen(false)}
+        >
+          <div
+            className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl p-6 pb-8 sm:pb-6 space-y-4 max-h-[88vh] overflow-y-auto shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-gray-100 pb-3">
               <h3 className="text-base font-bold text-gray-900">Ajukan Pertukaran Barang</h3>
               <button
+                type="button"
                 onClick={() => setIsBarterModalOpen(false)}
-                className="text-gray-400 hover:text-gray-700 text-lg font-bold px-2"
+                className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:text-gray-900 text-sm font-bold flex items-center justify-center touch-manipulation"
               >
                 ✕
               </button>
             </div>
 
             <div className="text-xs text-gray-600 bg-gray-50 p-3 rounded-xl">
-              Kamu akan menukar barangmu dengan <strong>{item.title}</strong> milik{' '}
-              <strong>{sellerName}</strong> di <strong>{selectedCodSpot}</strong>.
+              Kamu akan menukar barangmu dengan <strong>{item.title}</strong> (Rp{' '}
+              {item.price.toLocaleString('id-ID')}) milik <strong>{sellerName}</strong>.
             </div>
 
             {myBarterItems.length === 0 ? (
@@ -1005,11 +958,12 @@ export default function ProductDetail({
                 </p>
                 {onOpenAddItem && (
                   <button
+                    type="button"
                     onClick={() => {
                       setIsBarterModalOpen(false);
                       onOpenAddItem();
                     }}
-                    className="px-4 py-2.5 rounded-xl text-xs font-bold text-white"
+                    className="px-4 py-2.5 rounded-xl text-xs font-bold text-white touch-manipulation"
                     style={{ background: 'var(--color-primary, #567257)' }}
                   >
                     + Unggah Barangmu Dulu
@@ -1022,32 +976,35 @@ export default function ProductDetail({
                   <label className="block text-xs font-bold text-gray-700 mb-2">
                     Pilih Barang Milikmu yang Ditawarkan:
                   </label>
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                  <div className="space-y-2 max-h-44 overflow-y-auto">
                     {myBarterItems.map((myIt) => {
                       const isSelected = String(selectedOfferItemId) === String(myIt.id);
                       const myTitle = myIt.nama || myIt.title || myIt.nama_barang;
                       const myPrice = parseCleanPrice(myIt.harga ?? myIt.price ?? 0);
                       return (
-                        <label
+                        <button
+                          type="button"
                           key={myIt.id}
                           onClick={() => setSelectedOfferItemId(String(myIt.id))}
-                          className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                          className={`w-full text-left flex items-center gap-3 p-3 rounded-xl border transition-colors touch-manipulation ${
                             isSelected
-                              ? 'border-amber-500 bg-amber-50/50'
+                              ? 'border-amber-500 bg-amber-50/70'
                               : 'border-gray-200 hover:bg-gray-50'
                           }`}
                         >
-                          <input
-                            type="radio"
-                            name="offerItem"
-                            checked={isSelected}
-                            onChange={() => setSelectedOfferItemId(String(myIt.id))}
-                            className="accent-amber-600"
-                          />
+                          <span
+                            className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
+                              isSelected ? 'border-amber-600' : 'border-gray-300'
+                            }`}
+                          >
+                            {isSelected && (
+                              <span className="w-2 h-2 rounded-full bg-amber-600" />
+                            )}
+                          </span>
                           <img
                             src={myIt.foto || myIt.image || '/assets/seed-images/placeholder.svg'}
                             alt={myTitle}
-                            className="w-10 h-10 rounded-lg object-cover bg-gray-100"
+                            className="w-10 h-10 rounded-lg object-cover bg-gray-100 shrink-0"
                           />
                           <div className="min-w-0 flex-1">
                             <p className="text-xs font-bold text-gray-900 truncate">{myTitle}</p>
@@ -1055,11 +1012,37 @@ export default function ProductDetail({
                               Estimasi Rp {myPrice.toLocaleString('id-ID')}
                             </p>
                           </div>
-                        </label>
+                        </button>
                       );
                     })}
                   </div>
                 </div>
+
+                {/* Kalkulasi Selisih Perkiraan Harga Otomatis */}
+                {selectedOfferItem && (
+                  <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/60 space-y-1 text-xs">
+                    <div className="flex justify-between text-gray-600">
+                      <span>Harga Barang Target:</span>
+                      <span className="font-semibold">Rp {item.price.toLocaleString('id-ID')}</span>
+                    </div>
+                    <div className="flex justify-between text-gray-600">
+                      <span>Harga Barangmu:</span>
+                      <span className="font-semibold">
+                        Rp {selectedOfferPrice.toLocaleString('id-ID')}
+                      </span>
+                    </div>
+                    <div className="pt-1.5 mt-1 border-t border-amber-200/70 flex justify-between items-center font-bold">
+                      <span className="text-amber-900">Perkiraan Selisih:</span>
+                      <span className="text-amber-800">
+                        {priceDiff > 0
+                          ? `Kamu tambah Rp ${priceDiff.toLocaleString('id-ID')}`
+                          : priceDiff < 0
+                          ? `Lawan tambah Rp ${Math.abs(priceDiff).toLocaleString('id-ID')}`
+                          : 'Impas (Rp 0)'}
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-xs font-bold text-gray-700 mb-1">
@@ -1070,16 +1053,17 @@ export default function ProductDetail({
                     value={barterNote}
                     onChange={(e) => setBarterNote(e.target.value)}
                     placeholder="Contoh: Kondisi mulus 95%, siap COD sore ini..."
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 focus:outline-none focus:border-amber-600"
+                    className="w-full px-3 py-2.5 text-xs rounded-xl border border-gray-200 focus:outline-none focus:border-amber-600"
                   />
                 </div>
 
                 <button
+                  type="button"
                   onClick={handleConfirmBarter}
-                  className="w-full py-3 rounded-xl text-xs font-bold text-white shadow-sm"
+                  className="w-full py-3.5 rounded-xl text-xs font-bold text-white shadow-sm active:scale-[0.99] touch-manipulation"
                   style={{ background: 'var(--color-accent, #D97706)' }}
                 >
-                  Kirim Penawaran Barter
+                  Kirim Penawaran Barter ke Chat
                 </button>
               </>
             )}

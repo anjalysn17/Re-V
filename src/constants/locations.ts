@@ -198,9 +198,10 @@ export const UNNES_LOCATIONS: CampusLocation[] = [
   },
 ];
 
-/**
- * Mengelompokkan lokasi berdasarkan zona untuk kebutuhan dropdown (<optgroup>).
- */
+export const POPULAR_COD_SPOTS: CampusLocation[] = UNNES_LOCATIONS.filter(
+  (loc) => loc.isPopularCod
+);
+
 export function getGroupedLocations(): {
   zone: LocationZone;
   locations: CampusLocation[];
@@ -211,9 +212,6 @@ export function getGroupedLocations(): {
   }));
 }
 
-/**
- * Mencari data lokasi berdasarkan ID maupun nama lokasi (kompatibel jika data lama menyimpan string nama langsung).
- */
 export function findLocation(idOrName?: string | null): CampusLocation | undefined {
   if (!idOrName) return undefined;
   const normalized = idOrName.trim().toLowerCase();
@@ -225,9 +223,6 @@ export function findLocation(idOrName?: string | null): CampusLocation | undefin
   );
 }
 
-/**
- * Menampilkan label lokasi yang rapi untuk kartu barang atau detail transaksi.
- */
 export function formatLocationLabel(
   idOrName?: string | null,
   fallback = 'Kampus UNNES Sekaran'
@@ -237,9 +232,27 @@ export function formatLocationLabel(
   return found ? found.name : idOrName;
 }
 
-/**
- * Membuat tautan Google Maps untuk titik temu COD.
- */
-export function getGoogleMapsUrl(location: CampusLocation): string {
+export function haversineDistanceKm(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+export function getOsmEmbedUrl(lat: number, lng: number, delta = 0.004): string {
+  const bbox = `${lng - delta},${lat - delta},${lng + delta},${lat + delta}`;
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${lat},${lng}`;
+}
+
+export function getGoogleMapsUrl(location: Pick<CampusLocation, 'lat' | 'lng'>): string {
   return `https://www.google.com/maps/search/?api=1&query=${location.lat},${location.lng}`;
 }

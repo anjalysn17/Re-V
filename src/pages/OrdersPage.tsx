@@ -1,18 +1,20 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { notifyLocalChange } from '../services/api';
+import { generateId } from '../services/db';
 import OsmMapEmbed from '../components/OsmMapEmbed';
 
 export interface OrderRecord {
   id: string;
-  userId: string; // ID pembeli / pengaju barter
+  userId: string;
+  buyerName?: string;
   sellerId?: string;
   sellerName: string;
   itemTitle: string;
   itemImage?: string;
   type: 'beli' | 'barter';
   price?: number;
-  barterOfferTitle?: string; // Nama barang yang ditukar jika tipe 'barter'
+  barterOfferTitle?: string;
   codLocation?: string;
   codCoordinates?: { lat: number; lng: number };
   status: 'Menunggu COD' | 'Diproses' | 'Selesai' | 'Dibatalkan';
@@ -21,7 +23,6 @@ export interface OrderRecord {
 
 const ORDERS_STORAGE_KEY = 'rev_orders';
 
-// Helper untuk membaca pesanan dari localStorage (default kosong [])
 export function getOrders(userId?: string): OrderRecord[] {
   try {
     const raw = localStorage.getItem(ORDERS_STORAGE_KEY);
@@ -29,13 +30,14 @@ export function getOrders(userId?: string): OrderRecord[] {
     const parsed: OrderRecord[] = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     if (!userId) return parsed;
-    return parsed.filter((o) => o.userId === userId || o.sellerId === userId);
+    return parsed.filter(
+      (o) => String(o.userId) === String(userId) || String(o.sellerId) === String(userId)
+    );
   } catch {
     return [];
   }
 }
 
-// Helper global yang dipanggil saat transaksi terjadi (Checkout / Beli / Barter)
 export function addOrderTransaction(
   orderInput: Omit<OrderRecord, 'id' | 'createdAt' | 'status'> & {
     status?: OrderRecord['status'];
@@ -48,7 +50,7 @@ export function addOrderTransaction(
       orderInput.price !== undefined
         ? Number(String(orderInput.price).replace(/\D/g, '')) || 0
         : undefined,
-    id: `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    id: generateId('ORD'),
     status: orderInput.status || 'Menunggu COD',
     createdAt: new Date().toISOString(),
   };
@@ -57,12 +59,10 @@ export function addOrderTransaction(
   localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(updated));
   notifyLocalChange();
 
-  // Trigger event agar OrdersPage langsung ter-update
   window.dispatchEvent(new Event('rev-orders-updated'));
   return newOrder;
 }
 
-// Daftarkan ke window agar bisa dipanggil dari komponen mana saja dengan mudah
 if (typeof window !== 'undefined') {
   (window as any).addRevOrder = addOrderTransaction;
 }
@@ -74,7 +74,7 @@ interface OrdersPageProps {
 type FilterTab = 'all' | 'beli' | 'barter' | 'dibatalkan';
 
 export default function OrdersPage({ onNavigate }: OrdersPageProps) {
-  const { currentUser, openAuthModal } = useAuth() as any;
+  const { currentUser, openAuthModal } = useAuth();
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [filterType, setFilterType] = useState<FilterTab>('all');
   const [expandedMapId, setExpandedMapId] = useState<string | null>(null);
@@ -95,7 +95,6 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
   useEffect(() => {
     loadUserOrders();
 
-    // Dengarkan perubahan transaksi lokal maupun hasil sinkronisasi server
     window.addEventListener('rev-orders-updated', loadUserOrders);
     window.addEventListener('rev-db-updated', loadUserOrders);
     window.addEventListener('storage', loadUserOrders);
@@ -170,7 +169,6 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
           </p>
         </div>
 
-        {/* Filter Tipe & Status Transaksi */}
         <div className="flex gap-1.5 bg-gray-100 p-1 rounded-xl self-start overflow-x-auto max-w-full">
           {tabs.map((tab) => (
             <button
@@ -187,7 +185,7 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
               <span>{tab.label}</span>
               {typeof tab.count === 'number' && tab.count > 0 && (
                 <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
                     filterType === tab.id
                       ? 'bg-red-50 text-red-600'
                       : 'bg-gray-200 text-gray-600'
@@ -201,7 +199,6 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
         </div>
       </div>
 
-      {/* Empty State saat belum ada transaksi */}
       {filteredOrders.length === 0 ? (
         <div className="bg-white rounded-2xl p-10 text-center border border-gray-100 shadow-sm">
           <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
@@ -243,7 +240,6 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
           )}
         </div>
       ) : (
-        /* Daftar Transaksi */
         <div className="space-y-3">
           {filteredOrders.map((order) => {
             const isCancelled = order.status === 'Dibatalkan';
@@ -251,6 +247,12 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
               order.status === 'Menunggu COD' || order.status === 'Diproses';
             const hasLocation = Boolean(order.codLocation || order.codCoordinates);
             const isMapOpen = expandedMapId === order.id;
+
+            const isCurrentUserSeller =
+              order.sellerId && String(order.sellerId) === String(currentUser.id);
+            const partnerDisplay = isCurrentUserSeller
+              ? order.buyerName || 'Pembeli / Pengaju Barter'
+              : order.sellerName;
 
             return (
               <div
@@ -299,7 +301,7 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
                       {order.itemTitle}
                     </h3>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      Mitra: {order.sellerName}
+                      Mitra: {partnerDisplay}
                     </p>
                     {order.type === 'barter' ? (
                       <p className="text-xs font-medium text-amber-700 mt-1">
@@ -332,7 +334,6 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
                   </div>
                 </div>
 
-                {/* Peta OpenStreetMap Embed untuk Titik COD */}
                 {hasLocation && isMapOpen && (
                   <OsmMapEmbed
                     locationName={order.codLocation}
@@ -341,7 +342,6 @@ export default function OrdersPage({ onNavigate }: OrdersPageProps) {
                   />
                 )}
 
-                {/* Aksi Transaksi */}
                 <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-50">
                   <button
                     onClick={() => go('chat')}

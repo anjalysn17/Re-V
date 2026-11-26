@@ -1,44 +1,56 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getDB, saveDB } from '../services/db';
+import { getDB, saveDB, CURRENT_USER_KEY } from '../services/db';
 import { getOrders } from './OrdersPage';
+import { UNNES_LOCATIONS, DEFAULT_LOCATION_ID, findLocation } from '../constants/locations';
 
 interface ProfilePageProps {
   onNavigate?: (page: string, params?: any) => void;
 }
 
-const LOKASI_COD_PRESETS = [
-  'Kampus UNNES Sekaran (Gerbang Utama / Gedung)',
-  'Sekaran, Gunungpati',
-  'Patemon, Gunungpati',
-  'Banaran, Gunungpati',
-  'Mangunsari, Gunungpati',
-  'Ngijo, Gunungpati',
-  'Pakintelan, Gunungpati',
-  'Sampangan / Gajahmungkur',
-  'Tembalang / Banyumanik',
-];
-
-const DEFAULT_LOKASI = 'Sekaran, Gunungpati';
+const DEFAULT_LOC_OBJ =
+  UNNES_LOCATIONS.find((l) => l.id === DEFAULT_LOCATION_ID) || UNNES_LOCATIONS[0];
+const DEFAULT_LOKASI = DEFAULT_LOC_OBJ.name;
 
 export default function ProfilePage({ onNavigate }: ProfilePageProps) {
-  const { currentUser, logout, openAuthModal, updateCurrentUser, setCurrentUser } = useAuth() as any;
+  const { currentUser, logout, openAuthModal, updateCurrentUser } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
 
-  // State form edit profil menyesuaikan akun yang sedang login
   const [nama, setNama] = useState('');
   const [noHp, setNoHp] = useState('');
   const [lokasiPreset, setLokasiPreset] = useState(DEFAULT_LOKASI);
   const [lokasiCustom, setLokasiCustom] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
 
+  // Seluruh hooks ditempatkan sebelum early return agar jumlah hook konsisten saat login/logout
+  const db = getDB();
+  const userId = currentUser?.id;
+  const freshUser = userId ? (db.users || []).find((u: any) => String(u.id) === String(userId)) : null;
+  const activeUser: any = currentUser ? (freshUser ? { ...currentUser, ...freshUser } : currentUser) : null;
+
+  useEffect(() => {
+    if (activeUser && !isEditing) {
+      setNama(activeUser.nama || activeUser.name || '');
+      setNoHp(activeUser.no_hp || activeUser.phone || '');
+
+      const savedLokasi = activeUser.lokasi || activeUser.alamat || DEFAULT_LOKASI;
+      const matched = findLocation(savedLokasi);
+      if (matched) {
+        setLokasiPreset(matched.name);
+        setLokasiCustom('');
+      } else {
+        setLokasiPreset('LAINNYA');
+        setLokasiCustom(savedLokasi);
+      }
+    }
+  }, [activeUser?.id, activeUser?.nama, activeUser?.no_hp, activeUser?.lokasi, isEditing]);
+
   const go = (page: string, params?: any) => {
     if (onNavigate) onNavigate(page, params);
     else if ((window as any).revNavigate) (window as any).revNavigate(page, params);
   };
 
-  // Tampilan jika pengguna belum login
-  if (!currentUser) {
+  if (!currentUser || !activeUser) {
     return (
       <div className="max-w-md mx-auto px-4 py-16 text-center">
         <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
@@ -63,46 +75,19 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
     );
   }
 
-  // Ambil data terbaru dari db.users (tersinkron dengan server saat polling)
-  const db = getDB();
-  const userId = currentUser.id;
-  const freshUser = (db.users || []).find((u: any) => u.id === userId);
-  const activeUser = freshUser ? { ...currentUser, ...freshUser } : currentUser;
-
-  // Sinkronisasi state form saat user berubah atau selesai polling (kecuali sedang mengedit)
-  useEffect(() => {
-    if (activeUser && !isEditing) {
-      setNama(activeUser.nama || activeUser.name || '');
-      setNoHp(activeUser.no_hp || activeUser.phone || '');
-
-      const savedLokasi = activeUser.lokasi || activeUser.alamat || DEFAULT_LOKASI;
-      if (LOKASI_COD_PRESETS.includes(savedLokasi)) {
-        setLokasiPreset(savedLokasi);
-        setLokasiCustom('');
-      } else {
-        setLokasiPreset('LAINNYA');
-        setLokasiCustom(savedLokasi);
-      }
-    }
-  }, [activeUser.id, activeUser.nama, activeUser.no_hp, activeUser.lokasi, isEditing]);
-
-  // Hitung statistik dinamis milik akun yang sedang login (cek id_pemilik sesuai kontrak PAKEM)
   const myItemsCount = (db.items || []).filter(
     (item: any) =>
-      item.id_pemilik === userId ||
-      item.id_user === userId ||
-      item.sellerId === userId ||
-      item.ownerId === userId
+      String(item.id_pemilik ?? item.id_user ?? item.sellerId ?? item.ownerId) === String(userId)
   ).length;
-  const myOrdersCount = getOrders(userId).length;
+  const myOrdersCount = getOrders(String(userId)).length;
   const myCartCount = (db.cart || []).filter(
-    (c: any) => c.id_user === userId || c.userId === userId || c.id_pembeli === userId
+    (c: any) => String(c.id_user ?? c.userId ?? c.id_pembeli) === String(userId)
   ).length;
 
   const displayName = activeUser.nama || activeUser.name || 'Pengguna Re:V';
   const displayEmail = activeUser.email || '-';
   const displayLokasi = activeUser.lokasi || activeUser.alamat || DEFAULT_LOKASI;
-  const isUnnesStudent = displayEmail.toLowerCase().includes('unnes.ac.id') || Boolean(activeUser.is_verified);
+  const isUnnesVerified = Boolean(activeUser.is_verified);
   const initials = displayName
     .split(' ')
     .filter(Boolean)
@@ -130,13 +115,12 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
       alamat: finalLokasi,
     };
 
-    // 1. Simpan ke koleksi users di DB utama agar otomatis tersinkron ke backend via saveDB()
     const currentDb = getDB();
     const usersList = currentDb.users || [];
-    const existsInDb = usersList.some((u: any) => u.id === userId);
+    const existsInDb = usersList.some((u: any) => String(u.id) === String(userId));
     const updatedUsers = existsInDb
       ? usersList.map((u: any) =>
-          u.id === userId
+          String(u.id) === String(userId)
             ? {
                 ...u,
                 nama: trimmedNama,
@@ -152,15 +136,8 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
       users: updatedUsers,
     });
 
-    // 2. Perbarui cache sesi aktif di localStorage & AuthContext
-    localStorage.setItem('currentUser', JSON.stringify(updatedUser));
-    if (typeof updateCurrentUser === 'function') {
-      updateCurrentUser(updatedUser);
-    } else if (typeof setCurrentUser === 'function') {
-      setCurrentUser(updatedUser);
-    }
-
-    // 3. Beri sinyal pembaruan ke komponen lain (Header, dsb.)
+    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedUser));
+    updateCurrentUser(updatedUser);
     window.dispatchEvent(new Event('rev-db-updated'));
 
     setIsEditing(false);
@@ -198,7 +175,7 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-lg font-bold text-gray-900">{displayName}</h1>
-                {isUnnesStudent && (
+                {isUnnesVerified && (
                   <span className="px-2 py-0.5 text-[11px] font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
                     Mahasiswa Terverifikasi
                   </span>
@@ -256,9 +233,9 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
                 onChange={(e) => setLokasiPreset(e.target.value)}
                 className="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-emerald-600"
               >
-                {LOKASI_COD_PRESETS.map((area) => (
-                  <option key={area} value={area}>
-                    {area}
+                {UNNES_LOCATIONS.map((loc) => (
+                  <option key={loc.id} value={loc.name}>
+                    {loc.name}
                   </option>
                 ))}
                 <option value="LAINNYA">Lainnya (Tulis lokasi manual)</option>

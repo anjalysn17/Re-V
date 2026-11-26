@@ -22,6 +22,8 @@ interface AuthResult {
 
 interface AuthContextType {
   currentUser: User | null;
+  setCurrentUser: React.Dispatch<React.SetStateAction<User | null>>;
+  updateCurrentUser: (patch: Partial<User>) => void;
   login: (identifier: string, password: string) => Promise<AuthResult>;
   quickLogin: (userId: string) => void;
   logout: () => void;
@@ -50,13 +52,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
 
+  const updateCurrentUser = (patch: Partial<User>) => {
+    setCurrentUser((prev) => {
+      if (!prev) return prev;
+      const merged = { ...prev, ...patch };
+      try {
+        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(merged));
+      } catch {
+        /* abaikan error kuota storage */
+      }
+      return merged;
+    });
+  };
+
   useEffect(() => {
-    // Pastikan database terinisialisasi
     getDB();
 
     if (!API_ENABLED) return;
 
-    // Mode API: sesi sah hanya jika ada token. Verifikasi token ke server.
     if (!getToken()) {
       setCurrentUser(null);
       localStorage.removeItem(CURRENT_USER_KEY);
@@ -69,7 +82,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(u));
       })
       .catch(() => {
-        // 401 sudah ditangani lewat event 'rev-auth-expired'; error jaringan -> pertahankan sesi
+        /* 401 ditangani event rev-auth-expired */
       });
 
     const onExpired = () => setCurrentUser(null);
@@ -84,9 +97,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
     setIsAuthModalOpen(false);
     try {
-      await pullAll(); // ambil data pribadi (chat, keranjang, transaksi) milik akun ini
+      await pullAll();
     } catch {
-      /* cache lama tetap dipakai; polling akan menyusul */
+      /* cache lama tetap dipakai; polling menyusul */
     }
     return { success: true, user };
   };
@@ -101,11 +114,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // ---- Mode lokal (perilaku lama, tidak diubah) ----
     const db = getDB();
     const cleanId = identifier.trim().toLowerCase();
     const user = db.users.find(
-      u => u.email.toLowerCase() === cleanId || u.nama.toLowerCase() === cleanId
+      (u) => u.email.toLowerCase() === cleanId || u.nama.toLowerCase() === cleanId
     );
 
     if (!user) {
@@ -123,9 +135,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const quickLogin = (userId: string) => {
-    if (API_ENABLED) return; // di mode API login wajib lewat server
+    if (API_ENABLED) return;
     const db = getDB();
-    const user = db.users.find(u => u.id === userId);
+    const user = db.users.find((u) => u.id === userId);
     if (user) {
       setCurrentUser(user);
       localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
@@ -137,7 +149,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setCurrentUser(null);
     localStorage.removeItem(CURRENT_USER_KEY);
     if (API_ENABLED) {
-      // kirim perubahan yang tertunda dulu (masih pakai token), baru hapus token & muat tampilan tamu
       flushNow()
         .catch(() => undefined)
         .finally(() => {
@@ -167,16 +178,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // ---- Mode lokal (perilaku lama, tidak diubah) ----
     const db = getDB();
     const cleanEmail = data.email.trim().toLowerCase();
 
-    if (db.users.some(u => u.email.toLowerCase() === cleanEmail)) {
+    if (db.users.some((u) => u.email.toLowerCase() === cleanEmail)) {
       return { success: false, message: 'Email sudah terdaftar. Silakan masuk atau gunakan email lain.' };
     }
 
-    const nextNumber = db.users.length + 1;
-    const newId = `USR-${String(nextNumber).padStart(3, '0')}`;
+    const randomSuffix =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID().slice(0, 8)
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const newId = `USR-${randomSuffix}`;
 
     const newUser: User = {
       id: newId,
@@ -216,6 +229,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider
       value={{
         currentUser,
+        setCurrentUser,
+        updateCurrentUser,
         login,
         quickLogin,
         logout,
