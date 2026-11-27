@@ -1,5 +1,5 @@
-import { getDB, saveDB, generateId, parseSafePrice } from '../services/db';
-import { Item, User, Offer, Conversation, Message, Notification } from '../types/database';
+import { getDB, saveDB, generateId, parseSafePrice, pushNotification } from '../services/db';
+import { Item, User, Offer, Conversation, Message } from '../types/database';
 
 interface CreateOfferParams {
   myItem: Item;
@@ -130,20 +130,17 @@ export function createOfferAndConversation({
   };
   currentDB.messages.push(newMsg as Message);
 
-  // 4. Tambahkan Notifikasi baru untuk penerima
-  const newNtfId = generateId('NTF');
-  const newNotif: Notification = {
-    id: newNtfId,
-    id_user: targetItem.id_pemilik,
+  // 4. Simpan ke cache lokal & sinkronkan ke server terlebih dahulu
+  saveDB(currentDB);
+
+  // 5. Kirim notifikasi terstruktur untuk penerima
+  pushNotification({
+    userId: targetItem.id_pemilik,
     tipe: 'barter',
     teks: `Tawaran barter baru dari ${currentUser.nama} untuk ${targetName}`,
-    waktu: 'Baru saja',
-    sudah_dibaca: false,
-  };
-  currentDB.notifications.unshift(newNotif);
-
-  // 5. Simpan ke cache lokal & sinkronkan ke server
-  saveDB(currentDB);
+    link_page: 'chat',
+    target_id: conv.id,
+  });
 
   return {
     convId: conv.id,
@@ -228,22 +225,21 @@ export function getOrCreateConversation({
     (conv as any).pesan_terakhir = cleanText;
     (conv as any).lastMessage = cleanText;
     (conv as any).updatedAt = nowIso;
-
-    const newNtfId = generateId('NTF');
-    const newNotif: Notification = {
-      id: newNtfId,
-      id_user: targetItem.id_pemilik,
-      tipe: 'chat',
-      teks: `Pesan baru dari ${currentUser.nama} tentang ${targetName}`,
-      waktu: 'Baru saja',
-      sudah_dibaca: false,
-    };
-    currentDB.notifications.unshift(newNotif);
     updated = true;
   }
 
   if (updated) {
     saveDB(currentDB);
+  }
+
+  if (initialMessage && initialMessage.trim()) {
+    pushNotification({
+      userId: targetItem.id_pemilik,
+      tipe: 'chat',
+      teks: `Pesan baru dari ${currentUser.nama} tentang ${targetName}`,
+      link_page: 'chat',
+      target_id: conv.id,
+    });
   }
 
   return { convId: conv.id };

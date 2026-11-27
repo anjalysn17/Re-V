@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getDB, saveDB, generateId } from '../services/db';
+import { getDB, saveDB, generateId, parseSafePrice } from '../services/db';
 import { Item } from '../types/database';
 import {
   UNNES_LOCATIONS,
@@ -42,13 +42,8 @@ const PHOTO_PRESETS = [
 
 const DEFAULT_PLACEHOLDER = '/assets/seed-images/placeholder.svg';
 
-function parseHarga(val: string | number | undefined): number {
-  const digits = String(val ?? '').replace(/\D/g, '');
-  return digits ? Number(digits) : 0;
-}
-
 function formatRibuan(val: string | number | undefined): string {
-  const num = parseHarga(val);
+  const num = parseSafePrice(val);
   if (!num) return '';
   return num.toLocaleString('id-ID');
 }
@@ -140,6 +135,15 @@ export default function AddItemModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (!isOpen) return;
 
     setErrorMsg('');
     setShowToast(false);
@@ -151,7 +155,9 @@ export default function AddItemModal({
       const initialName = String(
         editItem.nama || extendedItem.title || extendedItem.nama_barang || ''
       );
-      const initialPrice = parseHarga(editItem.harga ?? (extendedItem.price as number | undefined));
+      const initialPrice = parseSafePrice(
+        editItem.harga ?? (extendedItem.price as number | undefined)
+      );
       const initialFoto = editItem.foto || DEFAULT_PLACEHOLDER;
 
       const rawOffer = String(extendedItem.transactionType || editItem.status || 'keduanya');
@@ -272,7 +278,7 @@ export default function AddItemModal({
       return;
     }
 
-    const numericHarga = parseHarga(hargaDisplay);
+    const numericHarga = parseSafePrice(hargaDisplay);
     if (!numericHarga || numericHarga <= 0) {
       setErrorMsg('Harga harus berupa angka lebih dari 0.');
       return;
@@ -299,7 +305,6 @@ export default function AddItemModal({
       const preservedStatus =
         (existing.status as string) === 'sold' ? ('sold' as Item['status']) : status;
 
-      // Hapus koordinat GPS mentah agar privasi penjual terlindungi di data publik
       const { koordinat: _dropCoords, ...restExisting } = existing;
 
       const updatedItem: Item & Record<string, unknown> = {
@@ -330,7 +335,7 @@ export default function AddItemModal({
         setShowToast(false);
         onItemUpdated?.();
         onClose();
-      }, 750);
+      }, 650);
       return;
     }
 
@@ -363,16 +368,19 @@ export default function AddItemModal({
       setShowToast(false);
       onItemAdded?.();
       onClose();
-    }, 800);
+    }, 650);
   };
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs overflow-y-auto"
+      role="dialog"
+      aria-modal="true"
+      aria-label={isEditMode ? 'Edit Barang' : 'Tambah Barang Baru'}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-xs overflow-y-auto"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
-        className="w-full max-w-lg rounded-2xl border shadow-2xl overflow-hidden my-6"
+        className="w-full max-w-lg rounded-t-2xl sm:rounded-2xl border shadow-2xl overflow-hidden my-0 sm:my-6"
         style={{
           background: 'var(--color-card, #fffdf8)',
           borderColor: 'var(--color-border, #d4c8b5)',
@@ -380,7 +388,7 @@ export default function AddItemModal({
         }}
       >
         <div
-          className="px-6 py-4 flex items-center justify-between border-b"
+          className="px-5 sm:px-6 py-4 flex items-center justify-between border-b"
           style={{ borderColor: 'var(--color-border)', background: 'var(--color-primary)' }}
         >
           <div className="flex items-center gap-2">
@@ -397,7 +405,7 @@ export default function AddItemModal({
           <button
             type="button"
             onClick={onClose}
-            className="text-white/80 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10"
+            className="text-white/80 hover:text-white transition-colors p-2 rounded-lg hover:bg-white/10 touch-manipulation"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -416,7 +424,7 @@ export default function AddItemModal({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+        <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-4 max-h-[82dvh] overflow-y-auto overscroll-contain pb-24 sm:pb-6">
           {errorMsg && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
               {errorMsg}
@@ -497,7 +505,6 @@ export default function AddItemModal({
             )}
           </div>
 
-          {/* Area COD Kampus / Kos (Aman Privasi, Tanpa Koordinat GPS Mentah) */}
           <div className="space-y-2">
             <label className="block text-xs font-bold text-gray-700">Area COD Kampus / Kos</label>
             <select
@@ -545,7 +552,7 @@ export default function AddItemModal({
                   type="button"
                   key={opt.id}
                   onClick={() => setStatus(opt.id as 'jual' | 'barter' | 'keduanya')}
-                  className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
+                  className={`min-h-[42px] py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer touch-manipulation ${
                     status === opt.id
                       ? 'border-[var(--color-primary)] bg-[#567257]/15 text-[var(--color-primary)]'
                       : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
@@ -557,7 +564,6 @@ export default function AddItemModal({
             </div>
           </div>
 
-          {/* Foto Barang */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-xs font-bold text-gray-700">Foto Barang</label>
@@ -574,7 +580,7 @@ export default function AddItemModal({
                   type="button"
                   key={tab.id}
                   onClick={() => setPhotoSource(tab.id as 'upload' | 'preset' | 'url')}
-                  className={`py-1.5 px-2 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer ${
+                  className={`min-h-[38px] py-1.5 px-2 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer touch-manipulation ${
                     photoSource === tab.id
                       ? 'border-[var(--color-primary)] bg-[#567257]/15 text-[var(--color-primary)]'
                       : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
@@ -589,7 +595,7 @@ export default function AddItemModal({
               <div>
                 <label
                   htmlFor="file-upload"
-                  className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed cursor-pointer transition-colors hover:bg-black/5 text-center"
+                  className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-dashed cursor-pointer transition-colors hover:bg-black/5 text-center touch-manipulation"
                   style={{ borderColor: 'var(--color-border)', background: '#f8f4ee' }}
                 >
                   <div
@@ -636,7 +642,7 @@ export default function AddItemModal({
                       setFoto(p.url);
                       setUploadedFileName('');
                     }}
-                    className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                    className={`px-3 py-2 rounded-lg border text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer touch-manipulation ${
                       foto === p.url
                         ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/15 text-[var(--color-accent)] font-bold'
                         : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
@@ -705,7 +711,7 @@ export default function AddItemModal({
                       setUploadedFileName('');
                       if (fileInputRef.current) fileInputRef.current.value = '';
                     }}
-                    className="text-xs text-red-500 hover:text-red-700 font-bold px-2 py-1 rounded-lg hover:bg-red-50 transition-colors shrink-0 cursor-pointer"
+                    className="text-xs text-red-500 hover:text-red-700 font-bold px-2 py-1.5 rounded-lg hover:bg-red-50 transition-colors shrink-0 cursor-pointer touch-manipulation"
                   >
                     Reset
                   </button>
@@ -730,14 +736,14 @@ export default function AddItemModal({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-2.5 rounded-xl border font-bold text-xs text-gray-600 hover:bg-black/5 transition-colors cursor-pointer"
+              className="min-h-[44px] flex-1 py-2.5 rounded-xl border font-bold text-xs text-gray-600 hover:bg-black/5 transition-colors cursor-pointer touch-manipulation"
               style={{ borderColor: 'var(--color-border)' }}
             >
               Batal
             </button>
             <button
               type="submit"
-              className="flex-1 py-2.5 rounded-xl text-white font-bold text-xs shadow-sm transition-all hover:opacity-90 active:scale-[0.99] cursor-pointer"
+              className="min-h-[44px] flex-1 py-2.5 rounded-xl text-white font-bold text-xs shadow-sm transition-all hover:opacity-90 active:scale-[0.99] cursor-pointer touch-manipulation"
               style={{ background: 'var(--color-accent)' }}
             >
               {isEditMode ? 'Simpan Perubahan' : 'Pasang Iklan Sekarang'}

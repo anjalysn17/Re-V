@@ -25,8 +25,14 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
   // Seluruh hooks ditempatkan sebelum early return agar jumlah hook konsisten saat login/logout
   const db = getDB();
   const userId = currentUser?.id;
-  const freshUser = userId ? (db.users || []).find((u: any) => String(u.id) === String(userId)) : null;
-  const activeUser: any = currentUser ? (freshUser ? { ...currentUser, ...freshUser } : currentUser) : null;
+  const freshUser = userId
+    ? (db.users || []).find((u: any) => String(u.id) === String(userId))
+    : null;
+  const activeUser: any = currentUser
+    ? freshUser
+      ? { ...currentUser, ...freshUser }
+      : currentUser
+    : null;
 
   useEffect(() => {
     if (activeUser && !isEditing) {
@@ -56,7 +62,12 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
         <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
             <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+              />
             </svg>
           </div>
           <h2 className="text-lg font-bold text-gray-800 mb-2">Belum Masuk ke Akun</h2>
@@ -64,8 +75,9 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
             Silakan masuk atau daftar menggunakan akun mahasiswa UNNES untuk melihat profil, barang, dan riwayat transaksimu.
           </p>
           <button
+            type="button"
             onClick={() => openAuthModal('login')}
-            className="w-full py-3 rounded-xl text-white font-semibold text-sm shadow-sm transition-opacity hover:opacity-90"
+            className="w-full py-3 rounded-xl text-white font-semibold text-sm shadow-sm transition-opacity hover:opacity-90 touch-manipulation"
             style={{ background: 'var(--color-primary, #567257)' }}
           >
             Masuk / Daftar Sekarang
@@ -101,9 +113,7 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
     const trimmedNama = nama.trim();
     const trimmedNoHp = noHp.trim();
     const finalLokasi =
-      lokasiPreset === 'LAINNYA'
-        ? lokasiCustom.trim() || DEFAULT_LOKASI
-        : lokasiPreset;
+      lokasiPreset === 'LAINNYA' ? lokasiCustom.trim() || DEFAULT_LOKASI : lokasiPreset;
 
     const updatedUser = {
       ...activeUser,
@@ -182,9 +192,7 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
                 )}
               </div>
               <p className="text-xs text-gray-500 mt-0.5">{displayEmail}</p>
-              {activeUser.nim && (
-                <p className="text-xs text-gray-500 mt-0.5">NIM: {activeUser.nim}</p>
-              )}
+              {activeUser.nim && <p className="text-xs text-gray-500 mt-0.5">NIM: {activeUser.nim}</p>}
               <p className="text-xs text-gray-600 mt-1.5 flex items-center gap-1">
                 <span>📍</span> {displayLokasi}
               </p>
@@ -192,8 +200,9 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
           </div>
 
           <button
+            type="button"
             onClick={() => setIsEditing(!isEditing)}
-            className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 shrink-0"
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 shrink-0 touch-manipulation"
           >
             {isEditing ? 'Batal' : 'Edit Profil'}
           </button>
@@ -258,7 +267,7 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
 
             <button
               type="submit"
-              className="px-4 py-2 rounded-xl text-xs font-bold text-white"
+              className="px-4 py-2 rounded-xl text-xs font-bold text-white touch-manipulation"
               style={{ background: 'var(--color-primary, #567257)' }}
             >
               Simpan Perubahan
@@ -270,24 +279,27 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
       {/* Ringkasan Aktivitas Akun */}
       <div className="grid grid-cols-3 gap-3">
         <button
+          type="button"
           onClick={() => go('my-items')}
-          className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center hover:border-gray-300 transition-colors"
+          className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center hover:border-gray-300 transition-colors touch-manipulation"
         >
           <p className="text-xl font-bold text-gray-900">{myItemsCount}</p>
           <p className="text-xs text-gray-500 mt-0.5">Barang Saya</p>
         </button>
 
         <button
+          type="button"
           onClick={() => go('orders')}
-          className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center hover:border-gray-300 transition-colors"
+          className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center hover:border-gray-300 transition-colors touch-manipulation"
         >
           <p className="text-xl font-bold text-gray-900">{myOrdersCount}</p>
           <p className="text-xs text-gray-500 mt-0.5">Transaksi</p>
         </button>
 
         <button
+          type="button"
           onClick={() => go('cart')}
-          className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center hover:border-gray-300 transition-colors"
+          className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center hover:border-gray-300 transition-colors touch-manipulation"
         >
           <p className="text-xl font-bold text-gray-900">{myCartCount}</p>
           <p className="text-xs text-gray-500 mt-0.5">Keranjang</p>
@@ -297,8 +309,9 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
       {/* Menu Navigasi Akun */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm divide-y divide-gray-100 overflow-hidden">
         <button
+          type="button"
           onClick={() => go('my-items')}
-          className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-gray-50"
+          className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-gray-50 touch-manipulation"
         >
           <div>
             <p className="text-sm font-semibold text-gray-800">Kelola Barang Saya</p>
@@ -308,8 +321,9 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
         </button>
 
         <button
+          type="button"
           onClick={() => go('orders')}
-          className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-gray-50"
+          className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-gray-50 touch-manipulation"
         >
           <div>
             <p className="text-sm font-semibold text-gray-800">Riwayat Pesanan & Barter</p>
@@ -320,8 +334,9 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
 
         {activeUser.role === 'admin' && (
           <button
+            type="button"
             onClick={() => go('admin')}
-            className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-gray-50"
+            className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-gray-50 touch-manipulation"
           >
             <div>
               <p className="text-sm font-semibold text-indigo-700">Dashboard Admin</p>
@@ -332,11 +347,12 @@ export default function ProfilePage({ onNavigate }: ProfilePageProps) {
         )}
 
         <button
+          type="button"
           onClick={() => {
             logout();
             go('home');
           }}
-          className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-red-50 text-red-600"
+          className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-red-50 text-red-600 touch-manipulation"
         >
           <span className="text-sm font-semibold">Keluar dari Akun</span>
           <span>→</span>

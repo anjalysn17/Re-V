@@ -11,6 +11,7 @@ import MyItemsPage from './pages/MyItemsPage';
 import CategoryPage from './pages/CategoryPage';
 import SearchResultsPage from './pages/SearchResultsPage';
 import CartPage from './pages/CartPage';
+import InfoPage from './pages/InfoPage';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { getDB } from './services/db';
 import { API_ENABLED } from './services/api';
@@ -23,6 +24,8 @@ export interface NavigationParams {
   productId?: string;
   conversationId?: string;
   searchQuery?: string;
+  sectionTitle?: string;
+  sectionCategory?: string;
 }
 
 export type NavigateFunction = (
@@ -31,33 +34,96 @@ export type NavigateFunction = (
   extraParam?: string
 ) => void;
 
-type Page = 'home' | 'product' | 'barter' | 'chat' | 'admin' | 'my-items' | 'category' | 'search' | 'cart' | 'profile' | 'orders';
+type Page =
+  | 'home'
+  | 'product'
+  | 'barter'
+  | 'chat'
+  | 'admin'
+  | 'my-items'
+  | 'category'
+  | 'search'
+  | 'cart'
+  | 'profile'
+  | 'orders'
+  | 'info';
 
-function BottomNavigation({ 
-  activePage, 
-  onNavigate, 
+function BottomNavigation({
+  activePage,
+  onNavigate,
   onOpenAddItem,
-}: { 
-  activePage: string; 
-  onNavigate: NavigateFunction; 
+}: {
+  activePage: string;
+  onNavigate: NavigateFunction;
   onOpenAddItem: () => void;
 }) {
   const navItems = [
-    { id: 'home', label: 'Beranda', icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
-    )},
-    { id: 'barter', label: 'Barter', icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
-    )},
-    { id: 'add', label: 'Jual/Barter', isAction: true, icon: (
-      <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-    )},
-    { id: 'chat', label: 'Chat', icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-    )},
-    { id: 'profile', label: 'Profil', icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-    )},
+    {
+      id: 'home',
+      label: 'Beranda',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
+          />
+        </svg>
+      ),
+    },
+    {
+      id: 'barter',
+      label: 'Barter',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+          />
+        </svg>
+      ),
+    },
+    {
+      id: 'add',
+      label: 'Jual/Barter',
+      isAction: true,
+      icon: (
+        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+        </svg>
+      ),
+    },
+    {
+      id: 'chat',
+      label: 'Chat',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+          />
+        </svg>
+      ),
+    },
+    {
+      id: 'profile',
+      label: 'Profil',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+          />
+        </svg>
+      ),
+    },
   ];
 
   return (
@@ -67,11 +133,15 @@ function BottomNavigation({
         if (item.isAction) {
           return (
             <button
+              type="button"
               key={item.id}
               onClick={onOpenAddItem}
-              className="flex flex-col items-center justify-center -mt-6 z-10"
+              className="flex flex-col items-center justify-center -mt-6 z-10 touch-manipulation"
             >
-              <div className="w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-transform active:scale-95" style={{ background: 'var(--color-accent)' }}>
+              <div
+                className="w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-transform active:scale-95"
+                style={{ background: 'var(--color-accent)' }}
+              >
                 {item.icon}
               </div>
               <span className="text-[10px] font-bold mt-1.5 text-gray-700">{item.label}</span>
@@ -80,14 +150,17 @@ function BottomNavigation({
         }
         return (
           <button
+            type="button"
             key={item.id}
             onClick={() => onNavigate(item.id)}
-            className={`flex flex-col items-center justify-center w-14 transition-colors ${isActive ? 'text-[#567257]' : 'text-gray-400 hover:text-gray-600'}`}
+            className={`flex flex-col items-center justify-center w-14 transition-colors touch-manipulation ${
+              isActive ? 'text-[#567257]' : 'text-gray-400 hover:text-gray-600'
+            }`}
           >
-            <div className="relative">
-              {item.icon}
-            </div>
-            <span className={`text-[10px] mt-1 ${isActive ? 'font-bold' : 'font-medium'}`}>{item.label}</span>
+            <div className="relative">{item.icon}</div>
+            <span className={`text-[10px] mt-1 ${isActive ? 'font-bold' : 'font-medium'}`}>
+              {item.label}
+            </span>
           </button>
         );
       })}
@@ -102,11 +175,12 @@ function MainLayout() {
   const [selectedConversationId, setSelectedConversationId] = useState<string | undefined>(undefined);
   const [selectedProductId, setSelectedProductId] = useState<string | undefined>(undefined);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [infoParams, setInfoParams] = useState<{ title?: string; category?: string }>({});
   const [isAddItemOpen, setIsAddItemOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const handleCartUpdated = () => {
-    setRefreshKey(prev => prev + 1);
+    setRefreshKey((prev) => prev + 1);
   };
 
   const navigate: NavigateFunction = (p, params, extraParam) => {
@@ -115,11 +189,15 @@ function MainLayout() {
       if (params.productId) setSelectedProductId(params.productId);
       if (params.conversationId) setSelectedConversationId(params.conversationId);
       if (params.searchQuery !== undefined) setSearchQuery(params.searchQuery);
+      if (params.sectionTitle || params.sectionCategory) {
+        setInfoParams({ title: params.sectionTitle, category: params.sectionCategory });
+      }
     } else if (typeof params === 'string') {
       if (p === 'category') setSelectedCategory(params);
       if (p === 'product') setSelectedProductId(params);
       if (p === 'chat') setSelectedConversationId(params);
       if (p === 'search') setSearchQuery(params);
+      if (p === 'info') setInfoParams({ title: params });
     }
     if (extraParam && p === 'chat') {
       setSelectedConversationId(extraParam);
@@ -139,14 +217,14 @@ function MainLayout() {
         el instanceof HTMLInputElement ||
         el instanceof HTMLTextAreaElement ||
         el instanceof HTMLSelectElement;
-      if (!typing) setRefreshKey(prev => prev + 1);
+      if (!typing) setRefreshKey((prev) => prev + 1);
     };
     window.addEventListener('rev-db-updated', onDbUpdated);
     return () => window.removeEventListener('rev-db-updated', onDbUpdated);
   }, []);
 
   const cartCount = currentUser
-    ? (getDB().cart || []).filter(c => c.id_user === currentUser.id).length
+    ? (getDB().cart || []).filter((c) => String(c.id_user) === String(currentUser.id)).length
     : 0;
 
   const handleOpenAddItem = () => {
@@ -158,7 +236,10 @@ function MainLayout() {
   };
 
   return (
-    <div className="min-h-screen relative flex flex-col" style={{ background: 'var(--color-bg)', fontFamily: 'var(--font-body)' }}>
+    <div
+      className="min-h-screen relative flex flex-col"
+      style={{ background: 'var(--color-bg)', fontFamily: 'var(--font-body)' }}
+    >
       <Header
         activePage={page}
         onNavigate={navigate}
@@ -221,20 +302,27 @@ function MainLayout() {
             onOpenAddItem={handleOpenAddItem}
           />
         )}
+        {page === 'info' && (
+          <InfoPage
+            sectionTitle={infoParams.title}
+            sectionCategory={infoParams.category}
+            onNavigate={navigate}
+          />
+        )}
       </main>
 
-      <BottomNavigation 
-        activePage={page} 
-        onNavigate={navigate} 
+      <BottomNavigation
+        activePage={page}
+        onNavigate={navigate}
         onOpenAddItem={handleOpenAddItem}
       />
 
-      <AuthModal onLoginSuccess={role => navigate(role === 'admin' ? 'admin' : 'home')} />
+      <AuthModal onLoginSuccess={(role) => navigate(role === 'admin' ? 'admin' : 'home')} />
 
       <AddItemModal
         isOpen={isAddItemOpen}
         onClose={() => setIsAddItemOpen(false)}
-        onItemAdded={() => setRefreshKey(prev => prev + 1)}
+        onItemAdded={() => setRefreshKey((prev) => prev + 1)}
       />
 
       {!API_ENABLED && (

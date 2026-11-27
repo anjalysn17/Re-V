@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import Footer from '../components/Footer';
-import { getDB } from '../services/db';
+import { getDB, CURRENT_USER_KEY } from '../services/db';
 
 interface HomePageProps {
   onNavigate: (page: string, params?: any) => void;
@@ -60,7 +60,7 @@ function resolveGrade(kondisi?: string): 'A' | 'B' | 'C' {
 
 function getUserDefaultLocation(): string {
   try {
-    const raw = localStorage.getItem('currentUser');
+    const raw = localStorage.getItem(CURRENT_USER_KEY);
     if (!raw) return '';
     const user = JSON.parse(raw);
     return typeof user?.lokasi === 'string' ? user.lokasi.split(',')[0].trim() : '';
@@ -71,21 +71,35 @@ function getUserDefaultLocation(): string {
 
 export default function HomePage({ onNavigate }: HomePageProps) {
   const [selectedLocation, setSelectedLocation] = useState<string>('Semua Lokasi');
+  const [nowTs, setNowTs] = useState<number>(() => Date.now());
   const userLocation = useMemo(() => getUserDefaultLocation(), []);
 
-  const allProducts = getDB().items.map((item, idx) => {
-    const rawItem = item as any;
-    const numericPrice = parseSafePrice(item.harga ?? rawItem.price ?? 0);
+  useEffect(() => {
+    const interval = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const db = getDB() as any;
+  const flashConfig = db.flashBarterConfig || { active: true, endsAt: Date.now() + 2 * 3600 * 1000 };
+  const remainingSec = Math.max(0, Math.floor((Number(flashConfig.endsAt || 0) - nowTs) / 1000));
+  const showFlashStrip = flashConfig.active !== false && remainingSec > 0;
+
+  const hh = String(Math.floor(remainingSec / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((remainingSec % 3600) / 60)).padStart(2, '0');
+  const ss = String(remainingSec % 60).padStart(2, '0');
+
+  const allProducts = db.items.map((item: any, idx: number) => {
+    const numericPrice = parseSafePrice(item.harga ?? item.price ?? 0);
     const rawStatus = String(item.status || '').toLowerCase();
     const offerType =
-      rawItem.transactionType ||
+      item.transactionType ||
       (['jual', 'barter', 'keduanya'].includes(rawStatus) ? rawStatus : 'jual');
     const fullLocation = (item.lokasi || 'Kampus UNNES').trim();
     const shortLocation = fullLocation.split(',')[0].trim() || 'Kampus UNNES';
 
     return {
       id: item.id,
-      name: item.nama || rawItem.title || rawItem.nama_barang || 'Tanpa Nama',
+      name: item.nama || item.title || item.nama_barang || 'Tanpa Nama',
       numericPrice,
       price:
         numericPrice === 0 && offerType === 'barter'
@@ -96,7 +110,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
       img: item.foto || '/assets/seed-images/placeholder.svg',
       grade: resolveGrade(item.kondisi),
       barter: offerType === 'barter' || offerType === 'keduanya',
-      isSold: isItemSold(rawItem),
+      isSold: isItemSold(item),
       sold: (idx % 8) + 2,
       kategori: item.kategori || 'Lainnya',
     };
@@ -105,7 +119,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
   const locationOptions = useMemo(() => {
     const set = new Set<string>(DEFAULT_CAMPUS_LOCATIONS);
     if (userLocation) set.add(userLocation);
-    allProducts.forEach((p) => {
+    allProducts.forEach((p: any) => {
       if (p.location && p.location !== 'Kampus UNNES') {
         set.add(p.location);
       }
@@ -117,57 +131,56 @@ export default function HomePage({ onNavigate }: HomePageProps) {
     if (selectedLocation === 'Semua Lokasi') return allProducts;
     const keyword = selectedLocation.toLowerCase();
     return allProducts.filter(
-      (p) =>
+      (p: any) =>
         p.location.toLowerCase().includes(keyword) ||
         p.fullLocation.toLowerCase().includes(keyword)
     );
   }, [allProducts, selectedLocation]);
 
-  const barterProducts = allProducts.filter((p) => p.barter && !p.isSold);
+  const barterProducts = allProducts.filter((p: any) => p.barter && !p.isSold);
 
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-5 space-y-8">
-      {/* Hero Banner Polos Minimalis */}
+      {/* Hero Banner */}
       <div
-        className="rounded-2xl relative px-8 py-10 md:px-12 md:py-12 flex flex-col justify-center items-start shadow-sm"
+        className="rounded-2xl relative px-6 py-8 sm:px-8 sm:py-10 md:px-12 md:py-12 flex flex-col justify-center items-start shadow-sm"
         style={{ background: 'linear-gradient(135deg, #3e5540 0%, var(--color-primary) 50%, #7a9b7b 100%)' }}
       >
-        {/* Badge Kategori Atas */}
         <div className="inline-flex items-center px-3.5 py-1 rounded-full text-xs font-semibold bg-white/15 text-white backdrop-blur-sm mb-3">
           Platform Jual, Beli & Barter
         </div>
 
-        {/* Headline Pas 2 Baris */}
         <h1 className="text-2xl md:text-3xl lg:text-4xl font-black text-white leading-snug tracking-tight max-w-2xl">
           Bingung Mau Dikemanain? <br />
           Barterin ke Teman Kampus Aja
         </h1>
 
-        {/* Tombol Aksi */}
-        <div className="flex items-center gap-3 mt-6">
+        <div className="flex flex-wrap items-center gap-3 mt-6">
           <button
+            type="button"
             onClick={() => {
               if (allProducts.length > 0) {
                 onNavigate('product', { productId: allProducts[0].id });
               } else {
-                onNavigate('home');
+                onNavigate('search');
               }
             }}
-            className="px-6 py-2.5 rounded-xl font-bold text-sm bg-white hover:bg-gray-100 transition-all shadow-sm"
+            className="min-h-[42px] px-6 py-2.5 rounded-xl font-bold text-sm bg-white hover:bg-gray-100 transition-all shadow-sm touch-manipulation"
             style={{ color: 'var(--color-primary)' }}
           >
             Mulai Belanja
           </button>
           <button
+            type="button"
             onClick={() => onNavigate('barter')}
-            className="px-6 py-2.5 rounded-xl font-bold text-sm border-2 border-white text-white hover:bg-white/10 transition-all"
+            className="min-h-[42px] px-6 py-2.5 rounded-xl font-bold text-sm border-2 border-white text-white hover:bg-white/10 transition-all touch-manipulation"
           >
             Barter Sekarang
           </button>
         </div>
       </div>
 
-      {/* Categories - Ukuran Kompak & Rapi Sejajar Rata Kiri */}
+      {/* Categories */}
       <div>
         <h2 className="text-lg font-black mb-4" style={{ fontFamily: 'var(--font-display)' }}>
           Kategori
@@ -175,14 +188,12 @@ export default function HomePage({ onNavigate }: HomePageProps) {
         <div className="flex items-center gap-3 overflow-x-auto pb-2">
           {categoryCards.map((cat) => (
             <button
+              type="button"
               key={cat.label}
               onClick={() => onNavigate('category', cat.label)}
-              className="group w-36 shrink-0 flex flex-col items-center justify-between py-3 px-2 rounded-2xl transition-all duration-200 hover:-translate-y-1 hover:shadow-md border bg-white cursor-pointer"
-              style={{
-                borderColor: 'var(--color-border)',
-              }}
+              className="group w-36 shrink-0 flex flex-col items-center justify-between py-3 px-2 rounded-2xl transition-all duration-200 hover:-translate-y-1 hover:shadow-md border bg-white cursor-pointer touch-manipulation"
+              style={{ borderColor: 'var(--color-border)' }}
             >
-              {/* Kotak Gambar */}
               <div className="w-20 h-20 rounded-xl flex items-center justify-center overflow-hidden bg-gray-50 group-hover:bg-gray-100/80 transition-colors p-1.5">
                 <img
                   src={cat.icon}
@@ -190,73 +201,74 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                   className="w-full h-full object-contain drop-shadow-sm group-hover:scale-105 transition-transform duration-200"
                 />
               </div>
-
-              {/* Teks Kategori */}
               <div className="text-center mt-2">
                 <p className="text-xs font-bold text-gray-800 leading-tight group-hover:text-[var(--color-primary)] transition-colors">
                   {cat.label}
                 </p>
-                <p className="text-[10px] mt-0.5 text-gray-400 font-medium">
-                  {cat.count}
-                </p>
+                <p className="text-[10px] mt-0.5 text-gray-400 font-medium">{cat.count}</p>
               </div>
             </button>
           ))}
         </div>
       </div>
 
-      {/* Flash promo strip */}
-      <div
-        className="rounded-2xl p-4 flex items-center gap-4 overflow-hidden"
-        style={{ background: 'linear-gradient(90deg, #c0392b, #e07b39)' }}
-      >
-        <div className="shrink-0">
-          <p className="text-white font-black text-sm" style={{ fontFamily: 'var(--font-display)' }}>
-            Flash Barter
-          </p>
-          <p className="text-white/80 text-xs">Berakhir dalam</p>
-          <div className="flex gap-1 mt-1">
-            {['02', '14', '38'].map((t, i) => (
-              <span
-                key={i}
-                className="px-1.5 py-0.5 rounded text-xs font-black text-white"
-                style={{ background: 'rgba(0,0,0,0.3)' }}
-              >
-                {t}
-              </span>
-            ))}
+      {/* Flash Barter Strip (Real-time Countdown yang bisa diatur Admin) */}
+      {showFlashStrip && (
+        <div
+          className="rounded-2xl p-4 flex items-center gap-4 overflow-hidden"
+          style={{ background: 'linear-gradient(90deg, #c0392b, #e07b39)' }}
+        >
+          <div className="shrink-0">
+            <p className="text-white font-black text-sm" style={{ fontFamily: 'var(--font-display)' }}>
+              Flash Barter
+            </p>
+            <p className="text-white/80 text-xs">Berakhir dalam</p>
+            <div className="flex gap-1 mt-1 tabular-nums">
+              {[hh, mm, ss].map((t, i) => (
+                <span
+                  key={i}
+                  className="px-1.5 py-0.5 rounded text-xs font-black text-white"
+                  style={{ background: 'rgba(0,0,0,0.3)' }}
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="flex-1 flex gap-3 overflow-x-auto pb-1">
+            {barterProducts.length === 0 ? (
+              <div className="flex items-center px-4 py-2 text-white/80 text-xs italic">
+                Belum ada barang barter yang tersedia saat ini
+              </div>
+            ) : (
+              barterProducts.slice(0, 5).map((p: any) => (
+                <button
+                  type="button"
+                  key={p.id}
+                  onClick={() => onNavigate('product', { productId: p.id })}
+                  className="shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl hover:opacity-90 transition-all touch-manipulation"
+                  style={{ background: 'rgba(255,255,255,0.15)' }}
+                >
+                  <img
+                    src={p.img}
+                    alt={p.name}
+                    className="w-8 h-8 rounded-lg object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
+                    }}
+                  />
+                  <div className="text-left">
+                    <p className="text-xs font-semibold text-white leading-tight max-w-[110px] truncate">
+                      {p.name}
+                    </p>
+                    <p className="text-[10px] text-white/90 font-medium whitespace-nowrap">{p.price}</p>
+                  </div>
+                </button>
+              ))
+            )}
           </div>
         </div>
-        <div className="flex-1 flex gap-3 overflow-x-auto pb-1">
-          {barterProducts.length === 0 ? (
-            <div className="flex items-center px-4 py-2 text-white/80 text-xs italic">
-              Belum ada barang barter yang tersedia saat ini
-            </div>
-          ) : (
-            barterProducts.slice(0, 5).map((p) => (
-              <button
-                key={p.id}
-                onClick={() => onNavigate('product', { productId: p.id })}
-                className="shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl hover:opacity-90 transition-all"
-                style={{ background: 'rgba(255,255,255,0.15)' }}
-              >
-                <img
-                  src={p.img}
-                  alt={p.name}
-                  className="w-8 h-8 rounded-lg object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
-                  }}
-                />
-                <div className="text-left">
-                  <p className="text-xs font-semibold text-white leading-tight max-w-[110px] truncate">{p.name}</p>
-                  <p className="text-[10px] text-white/90 font-medium whitespace-nowrap">{p.price}</p>
-                </div>
-              </button>
-            ))
-          )}
-        </div>
-      </div>
+      )}
 
       {/* Product grid: Baru Diposting */}
       <div>
@@ -266,8 +278,10 @@ export default function HomePage({ onNavigate }: HomePageProps) {
               Baru Diposting
             </h2>
 
-            {/* Filter Lokasi Kampus / COD */}
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border bg-white text-xs" style={{ borderColor: 'var(--color-border)' }}>
+            <div
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border bg-white text-xs"
+              style={{ borderColor: 'var(--color-border)' }}
+            >
               <svg className="w-3.5 h-3.5 text-[var(--color-primary)] shrink-0" viewBox="0 0 20 20" fill="currentColor">
                 <path
                   fillRule="evenodd"
@@ -292,8 +306,9 @@ export default function HomePage({ onNavigate }: HomePageProps) {
 
           {allProducts.length > 0 && (
             <button
+              type="button"
               onClick={() => onNavigate('search')}
-              className="text-sm font-medium hover:underline"
+              className="text-sm font-medium hover:underline touch-manipulation"
               style={{ color: 'var(--color-primary)' }}
             >
               Lihat Semua →
@@ -312,11 +327,10 @@ export default function HomePage({ onNavigate }: HomePageProps) {
               </svg>
             </div>
             <div className="space-y-1">
-              <h3 className="text-base font-bold text-gray-800">
-                Belum ada barang yang diposting
-              </h3>
+              <h3 className="text-base font-bold text-gray-800">Belum ada barang yang diposting</h3>
               <p className="text-xs text-gray-500 max-w-sm mx-auto">
-                Jadi yang pertama upload barang, yuk! Klik tombol <strong className="text-[var(--color-accent)]">"Tambah Barang"</strong> di atas untuk mulai menawarkan barangmu.
+                Jadi yang pertama upload barang, yuk! Klik tombol{' '}
+                <strong className="text-[var(--color-accent)]">"Tambah Barang"</strong> di atas untuk mulai menawarkan barangmu.
               </p>
             </div>
           </div>
@@ -329,8 +343,9 @@ export default function HomePage({ onNavigate }: HomePageProps) {
               Belum ada barang di area <span className="text-[var(--color-primary)]">{selectedLocation}</span>
             </p>
             <button
+              type="button"
               onClick={() => setSelectedLocation('Semua Lokasi')}
-              className="px-4 py-1.5 rounded-xl text-xs font-bold text-white"
+              className="px-4 py-1.5 rounded-xl text-xs font-bold text-white touch-manipulation"
               style={{ background: 'var(--color-primary)' }}
             >
               Tampilkan Semua Lokasi
@@ -338,11 +353,12 @@ export default function HomePage({ onNavigate }: HomePageProps) {
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {filteredProducts.map((product) => (
+            {filteredProducts.map((product: any) => (
               <button
+                type="button"
                 key={product.id}
                 onClick={() => onNavigate('product', { productId: product.id })}
-                className={`rounded-2xl border overflow-hidden text-left group hover:shadow-lg hover:-translate-y-1 transition-all duration-200 cursor-pointer ${
+                className={`rounded-2xl border overflow-hidden text-left group hover:shadow-lg hover:-translate-y-1 transition-all duration-200 cursor-pointer touch-manipulation ${
                   product.isSold ? 'opacity-75' : ''
                 }`}
                 style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
@@ -379,7 +395,9 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                   </div>
                 </div>
                 <div className="p-3">
-                  <p className="text-sm font-semibold leading-snug line-clamp-2 min-h-[2.5rem]">{product.name}</p>
+                  <p className="text-sm font-semibold leading-snug line-clamp-2 min-h-[2.5rem]">
+                    {product.name}
+                  </p>
                   <p
                     className="text-sm sm:text-base font-black mt-1.5 break-words"
                     style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-display)' }}
@@ -388,10 +406,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                   </p>
                   <div className="flex items-center justify-between gap-1.5 mt-2">
                     <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#f0ebe2] text-[11px] text-gray-600 max-w-[68%]">
-                      <svg
-                        className="w-3 h-3 shrink-0 fill-current text-gray-500"
-                        viewBox="0 0 20 20"
-                      >
+                      <svg className="w-3 h-3 shrink-0 fill-current text-gray-500" viewBox="0 0 20 20">
                         <path
                           fillRule="evenodd"
                           d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
@@ -411,7 +426,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
         )}
       </div>
 
-      <Footer />
+      <Footer onNavigate={onNavigate} />
     </div>
   );
 }
