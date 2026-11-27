@@ -1,11 +1,6 @@
 // Lapisan koneksi ke backend (Railway).
 // PAKEM: bila VITE_API_URL kosong -> API_ENABLED=false -> aplikasi berjalan 100% localStorage
 // seperti sebelumnya (tidak ada satu pun request jaringan).
-//
-// Cara kerja saat API aktif: localStorage menjadi CACHE dari server.
-//  - Baca  : getDB() tetap sinkron membaca cache.
-//  - Tulis : saveDB() menulis cache, lalu perbedaannya (diff) dikirim ke /api/sync (debounce).
-//  - Segar : pullAll() mengganti cache dengan data server (saat start, login, logout, polling).
 
 const DB_KEY = 'jualbeliDB';
 const ORDERS_KEY = 'rev_orders';
@@ -95,7 +90,7 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 1500
   }
 }
 
-// ---------- Auth ----------
+// ---------- Auth & OTP ----------
 export interface AuthResult {
   token: string;
   user: Record<string, unknown>;
@@ -103,10 +98,72 @@ export interface AuthResult {
 export const apiLogin = (identifier: string, password: string) =>
   request<AuthResult>('/auth/login', { method: 'POST', body: JSON.stringify({ identifier, password }) });
 
-export const apiRegister = (data: { nama: string; email: string; password: string; lokasi?: string }) =>
-  request<AuthResult>('/auth/register', { method: 'POST', body: JSON.stringify(data) });
+export const apiSendOtp = (email: string, mode: 'register' | 'verify-existing' = 'register') =>
+  request<{ ok: boolean; message: string }>('/auth/send-otp', {
+    method: 'POST',
+    body: JSON.stringify({ email, mode }),
+  });
+
+export const apiVerifyOtp = (email: string, otp: string) =>
+  request<{ ok: boolean; verified: boolean; message: string; user?: Record<string, unknown> | null }>(
+    '/auth/verify-otp',
+    {
+      method: 'POST',
+      body: JSON.stringify({ email, otp }),
+    }
+  );
+
+export const apiRegister = (data: {
+  nama: string;
+  email: string;
+  password: string;
+  lokasi?: string;
+  otp?: string;
+}) => request<AuthResult>('/auth/register', { method: 'POST', body: JSON.stringify(data) });
 
 export const apiMe = () => request<{ user: Record<string, unknown> }>('/auth/me');
+
+// ---------- Rekomendasi Lokasi COD (Haversine + Gemini AI) ----------
+export interface RecommendCodResponse {
+  source: string;
+  userDistanceKm: number | null;
+  spots: Array<{
+    id: string;
+    name: string;
+    lat: number;
+    lng: number;
+    desc: string;
+    distMidKm: number;
+    distAKm: number | null;
+    distBKm: number | null;
+  }>;
+  recommendedSpot: {
+    id: string;
+    name: string;
+    lat: number;
+    lng: number;
+    desc: string;
+    distMidKm: number;
+    distAKm: number | null;
+    distBKm: number | null;
+  };
+  advice: string;
+}
+
+export const apiRecommendCod = (payload: {
+  coordA?: { lat: number; lng: number } | null;
+  coordB?: { lat: number; lng: number } | null;
+  itemName?: string;
+  itemCategory?: string;
+}) =>
+  request<RecommendCodResponse>(
+    '/chat/recommend-cod',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    20000
+  );
 
 // ---------- Sync ----------
 type Rec = Record<string, unknown> & { id?: unknown };
@@ -126,7 +183,6 @@ let lastVersion = '';
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-// Semua operasi sync/pull dijalankan berurutan supaya snapshot tidak balapan.
 let chain: Promise<unknown> = Promise.resolve();
 function enqueue<T>(fn: () => Promise<T>): Promise<T> {
   const p = chain.then(fn, fn);
@@ -153,7 +209,6 @@ function readLocal(): Record<CollectionName, Rec[]> {
   return out;
 }
 
-// Password tidak pernah dikirim ke server lewat sync.
 function clean(c: CollectionName, rec: Rec): Rec {
   if (c !== 'users') return rec;
   const { password: _password, ...rest } = rec as Rec & { password?: unknown };
@@ -229,7 +284,6 @@ async function runFlush(): Promise<void> {
         }
       });
     }
-    // Ada perubahan lokal yang ditolak server -> samakan lagi dengan kondisi server.
     if (realign) await doPull();
   } finally {
     flushing = false;
@@ -261,19 +315,17 @@ function schedulePush(): void {
   pushTimer = setTimeout(() => {
     pushTimer = null;
     enqueue(runFlush).catch((err) => {
-      if (err instanceof ApiError && err.status === 401) return; // sesi habis, ditangani event
+      if (err instanceof ApiError && err.status === 401) return;
       console.warn('[sync] gagal kirim, coba lagi 5 detik:', err instanceof Error ? err.message : err);
       setTimeout(schedulePush, 5000);
     });
   }, 300);
 }
 
-/** Dipanggil setiap data lokal berubah (saveDB, perubahan orders). Aman dipanggil kapan saja. */
 export function notifyLocalChange(): void {
   if (API_ENABLED && hydrated) schedulePush();
 }
 
-/** Kirim perubahan tertunda sekarang juga. */
 export function flushNow(): Promise<void> {
   if (pushTimer) {
     clearTimeout(pushTimer);
@@ -282,7 +334,6 @@ export function flushNow(): Promise<void> {
   return enqueue(runFlush);
 }
 
-/** Kirim perubahan tertunda lalu ganti cache dengan data terbaru dari server. */
 export function pullAll(): Promise<void> {
   return enqueue(async () => {
     await runFlush();
@@ -290,7 +341,6 @@ export function pullAll(): Promise<void> {
   });
 }
 
-/** Dipakai resetDB() saat API aktif: hanya membersihkan cache lokal, TIDAK menyentuh server. */
 export function resetLocalCacheForApi(): void {
   try {
     localStorage.removeItem(DB_KEY);
@@ -314,10 +364,9 @@ function startPolling(): void {
     } catch {
       /* jaringan putus: coba lagi di putaran berikutnya */
     }
-  }, 15000);
+  }, 10000);
 }
 
-/** Dipanggil di main.tsx sebelum render pertama. Tidak pernah melempar error. */
 export async function bootstrapBackend(): Promise<void> {
   if (!API_ENABLED) return;
   try {

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getDB } from '../services/db';
+import { getDB, markNotificationsRead } from '../services/db';
+import { Notification } from '../types/database';
 import { APP_NAME, APP_LOGO_LETTER } from '../constants/brand';
 
 interface HeaderProps {
@@ -10,7 +11,6 @@ interface HeaderProps {
   cartCount?: number;
 }
 
-// Rekomendasi kata kunci pencarian populer untuk mahasiswa UNNES
 const popularSearches = [
   'Laptop Lenovo',
   'Buku Kalkulus',
@@ -22,45 +22,224 @@ const popularSearches = [
   'Gitar Akustik',
 ];
 
+function formatNotifTime(waktu?: string): string {
+  if (!waktu) return 'Baru saja';
+  const parsed = Date.parse(waktu);
+  if (Number.isNaN(parsed)) return waktu;
+  const diffSec = Math.max(0, Math.floor((Date.now() - parsed) / 1000));
+  if (diffSec < 60) return 'Baru saja';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} mnt lalu`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} jam lalu`;
+  return new Date(parsed).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+}
+
 export default function Header({ activePage, onNavigate, onOpenAddItem, cartCount }: HeaderProps) {
   const { currentUser, openAuthModal, logout } = useAuth();
   const [search, setSearch] = useState('');
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const notifications = getDB().notifications;
-  const unreadCount = notifications.filter(n => !n.sudah_dibaca).length;
+  const [, setDbTick] = useState(0);
 
-  const computedCartCount = cartCount !== undefined
-    ? cartCount
-    : (currentUser ? (getDB().cart || []).filter(c => c.id_user === currentUser.id).length : 0);
+  const desktopNotifRef = useRef<HTMLDivElement>(null);
+  const mobileNotifRef = useRef<HTMLDivElement>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  // Dengarkan perubahan DB lokal/server agar badge notifikasi & keranjang langsung ter-update
+  useEffect(() => {
+    const bump = () => setDbTick((n) => n + 1);
+    window.addEventListener('rev-db-updated', bump);
+    return () => window.removeEventListener('rev-db-updated', bump);
+  }, []);
+
+  // Tutup panel notifikasi & profil saat klik di luar atau menekan Escape
+  useEffect(() => {
+    if (!notifOpen && !profileOpen) return;
+
+    const handlePointerDown = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+
+      const insideDesktopNotif = desktopNotifRef.current?.contains(target);
+      const insideMobileNotif = mobileNotifRef.current?.contains(target);
+      const insideProfile = profileRef.current?.contains(target);
+
+      if (notifOpen && !insideDesktopNotif && !insideMobileNotif) {
+        setNotifOpen(false);
+      }
+      if (profileOpen && !insideProfile) {
+        setProfileOpen(false);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setNotifOpen(false);
+        setProfileOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown, { passive: true });
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [notifOpen, profileOpen]);
+
+  const db = getDB();
+  const userNotifications = currentUser
+    ? (db.notifications || []).filter((n) => String(n.id_user) === String(currentUser.id))
+    : [];
+  const unreadCount = userNotifications.filter((n) => !n.sudah_dibaca).length;
+
+  const computedCartCount =
+    cartCount !== undefined
+      ? cartCount
+      : currentUser
+      ? (db.cart || []).filter((c) => String(c.id_user) === String(currentUser.id)).length
+      : 0;
 
   const handlePerformSearch = (customQuery?: string) => {
-    const inputEl = document.querySelector('header input[type="text"]') as HTMLInputElement | null;
-    const inputVal = inputEl ? inputEl.value : '';
-    const q = (customQuery !== undefined ? customQuery : (search || inputVal || '')).trim();
+    const q = (customQuery !== undefined ? customQuery : search).trim();
     if (!q) return;
+    setNotifOpen(false);
+    setProfileOpen(false);
     onNavigate('search', { searchQuery: q });
   };
 
+  const handleNotificationClick = (n: Notification) => {
+    if (currentUser) {
+      markNotificationsRead(currentUser.id, n.id);
+    }
+    setNotifOpen(false);
+
+    if (n.link_page === 'chat' || n.tipe === 'chat' || n.tipe === 'barter') {
+      onNavigate('chat', n.target_id ? { conversationId: n.target_id } : undefined);
+    } else if (n.link_page === 'orders' || n.tipe === 'order' || n.tipe === 'success') {
+      onNavigate('orders');
+    } else if (n.link_page === 'my-items') {
+      onNavigate('my-items');
+    }
+  };
+
+  const handleMarkAllRead = () => {
+    if (!currentUser) return;
+    markNotificationsRead(currentUser.id);
+  };
+
+  const renderNotificationDropdown = (alignClass = 'right-0') => (
+    <div
+      role="dialog"
+      aria-label="Daftar Notifikasi"
+      className={`absolute ${alignClass} top-12 w-80 max-w-[90vw] rounded-xl shadow-2xl border z-50 overflow-hidden`}
+      style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
+    >
+      <div
+        className="px-4 py-3 border-b flex items-center justify-between"
+        style={{ borderColor: 'var(--color-border)' }}
+      >
+        <span className="font-bold text-xs text-gray-900">
+          Notifikasi {unreadCount > 0 ? `(${unreadCount})` : ''}
+        </span>
+        {unreadCount > 0 && (
+          <button
+            type="button"
+            onClick={handleMarkAllRead}
+            className="text-[11px] text-[var(--color-primary)] font-semibold hover:underline touch-manipulation"
+          >
+            Tandai semua dibaca
+          </button>
+        )}
+      </div>
+
+      <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto overscroll-contain">
+        {!currentUser ? (
+          <div className="p-5 text-center text-xs text-gray-500">
+            Masuk terlebih dahulu untuk melihat notifikasi chat dan pesanan.
+          </div>
+        ) : userNotifications.length === 0 ? (
+          <div className="p-6 text-center text-xs text-gray-500">
+            Belum ada notifikasi baru. Aktivitas chat, tawaran barter, dan status pesanan akan muncul di sini.
+          </div>
+        ) : (
+          userNotifications.map((n) => (
+            <button
+              type="button"
+              key={n.id}
+              onClick={() => handleNotificationClick(n)}
+              className={`w-full text-left p-3 flex items-start gap-2.5 hover:bg-black/5 active:bg-black/10 transition-colors touch-manipulation ${
+                !n.sudah_dibaca ? 'bg-[#567257]/10' : ''
+              }`}
+            >
+              <div
+                className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+                style={{
+                  background:
+                    n.tipe === 'barter'
+                      ? '#e07b3915'
+                      : n.tipe === 'chat'
+                      ? '#56725715'
+                      : '#4a8c5c15',
+                  color:
+                    n.tipe === 'barter'
+                      ? 'var(--color-accent)'
+                      : n.tipe === 'chat'
+                      ? 'var(--color-primary)'
+                      : '#4a8c5c',
+                }}
+              >
+                {n.tipe === 'barter' && (
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                )}
+                {n.tipe === 'chat' && (
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                )}
+                {(n.tipe === 'success' || n.tipe === 'order') && (
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-gray-800 leading-snug">{n.teks}</p>
+                <span className="text-[10px] text-gray-400 mt-0.5 block">{formatNotifTime(n.waktu)}</span>
+              </div>
+              {!n.sudah_dibaca && <span className="w-2 h-2 rounded-full bg-[#e07b39] shrink-0 mt-1.5" />}
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+
   return (
-    <header className="sticky top-0 z-50 shadow-md" style={{ background: 'var(--color-primary)' }}>
+    <header className="sticky top-0 z-40 shadow-md" style={{ background: 'var(--color-primary)' }}>
       {/* Top bar */}
-      <div className="max-w-screen-xl mx-auto px-4 py-3 flex items-center gap-3">
-        {/* Logo  */}
+      <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-3">
+        {/* Logo */}
         <button
+          type="button"
           onClick={() => onNavigate('home')}
           title={`${APP_NAME} Beranda`}
-          className="w-10 h-10 rounded-xl flex items-center justify-center text-xl font-black shadow-sm shrink-0 hover:opacity-90 transition-transform active:scale-95"
+          className="w-10 h-10 rounded-xl flex items-center justify-center text-xl font-black shadow-sm shrink-0 hover:opacity-90 transition-transform active:scale-95 touch-manipulation"
           style={{ background: 'var(--color-bg)', color: 'var(--color-primary)' }}
         >
           {APP_LOGO_LETTER}
         </button>
 
-        {/* Tombol Beranda  */}
+        {/* Tombol Beranda Desktop */}
         <button
+          type="button"
           onClick={() => onNavigate('home')}
           title="Beranda"
-          className="hidden md:flex text-white hover:opacity-85 transition-all p-2 rounded-xl shrink-0 flex items-center justify-center"
+          className="hidden md:flex text-white hover:opacity-85 transition-all p-2.5 rounded-xl shrink-0 items-center justify-center touch-manipulation"
           style={{
             background: activePage === 'home' ? 'rgba(255, 255, 255, 0.18)' : 'rgba(255, 255, 255, 0.08)',
           }}
@@ -75,26 +254,27 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
           </svg>
         </button>
 
-        {/* Search Bar - Otomatis Melebar & Proporsional ke Kiri */}
-        <div className="flex-1 relative">
+        {/* Search Bar */}
+        <div className="flex-1 min-w-0 relative">
           <div className="flex rounded-xl overflow-hidden shadow-sm">
             <input
               type="text"
               value={search}
-              onChange={e => setSearch(e.target.value)}
-              onKeyDown={e => {
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
                   handlePerformSearch();
                 }
               }}
-              placeholder="Cari barang, buku, elektronik, atau tawarkan barter..."
-              className="w-full px-4 py-2.5 text-sm outline-none"
+              placeholder="Cari barang, buku, elektronik..."
+              className="w-full min-w-0 px-3 sm:px-4 py-2.5 text-sm outline-none"
               style={{ background: '#fffdf8', color: 'var(--color-text)', fontFamily: 'var(--font-body)' }}
             />
             <button
+              type="button"
               onClick={() => handlePerformSearch()}
-              className="px-6 py-2.5 text-white font-semibold text-sm transition-opacity hover:opacity-90 shrink-0 cursor-pointer"
+              className="px-3.5 sm:px-6 py-2.5 text-white font-semibold text-xs sm:text-sm transition-opacity hover:opacity-90 shrink-0 cursor-pointer touch-manipulation"
               style={{ background: 'var(--color-accent)', fontFamily: 'var(--font-body)' }}
             >
               Cari
@@ -102,10 +282,59 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
           </div>
         </div>
 
-        {/* Smart Barter Button */}
+        {/* Pintasan Mobile: Notifikasi + Smart Barter */}
+        <div className="flex md:hidden items-center gap-1.5 shrink-0">
+          <div className="relative" ref={mobileNotifRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setProfileOpen(false);
+                setNotifOpen((prev) => !prev);
+              }}
+              aria-label="Notifikasi"
+              className="relative w-10 h-10 rounded-xl flex items-center justify-center text-white transition-all active:scale-95 touch-manipulation"
+              style={{
+                background: notifOpen ? 'rgba(255, 255, 255, 0.25)' : 'rgba(255, 255, 255, 0.14)',
+              }}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+                />
+              </svg>
+              {unreadCount > 0 && (
+                <span
+                  className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center shadow"
+                  style={{ background: 'var(--color-accent)', color: 'white' }}
+                >
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+            {notifOpen && renderNotificationDropdown('right-0')}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onNavigate('barter')}
+            className="h-10 px-2.5 rounded-xl text-[11px] font-bold text-white transition-all active:scale-95 shrink-0 shadow-sm touch-manipulation"
+            style={{
+              background: activePage === 'barter' ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.18)',
+              border: '1px solid rgba(255, 255, 255, 0.25)',
+            }}
+          >
+            Barter
+          </button>
+        </div>
+
+        {/* Smart Barter Button Desktop */}
         <button
+          type="button"
           onClick={() => onNavigate('barter')}
-          className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-white transition-all hover:opacity-90 shrink-0 shadow-sm"
+          className="hidden md:flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-white transition-all hover:opacity-90 shrink-0 shadow-sm touch-manipulation"
           style={{
             background: activePage === 'barter' ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.18)',
             border: '1px solid rgba(255, 255, 255, 0.25)',
@@ -114,8 +343,9 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
           <span>Smart Barter</span>
         </button>
 
-        {/* Tombol Tambah Barang Baru */}
+        {/* Tombol Tambah Barang Baru Desktop */}
         <button
+          type="button"
           onClick={() => {
             if (!currentUser) {
               openAuthModal('login');
@@ -123,7 +353,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
               onOpenAddItem();
             }
           }}
-          className="hidden md:flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold text-white transition-all hover:opacity-90 shrink-0 shadow-sm"
+          className="hidden md:flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold text-white transition-all hover:opacity-90 shrink-0 shadow-sm touch-manipulation"
           style={{
             background: 'var(--color-accent)',
             fontFamily: 'var(--font-body)',
@@ -135,12 +365,13 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
           <span>Tambah Barang</span>
         </button>
 
-        {/* Right Icons: Keranjang, Notifikasi, Profil */}
+        {/* Right Icons Desktop: Keranjang, Notifikasi, Profil */}
         <div className="hidden md:flex items-center gap-3.5 shrink-0 pl-1">
           {/* Cart */}
           <button
+            type="button"
             onClick={() => onNavigate('cart')}
-            className="relative text-white flex flex-col items-center gap-0.5 hover:opacity-80 transition-opacity cursor-pointer"
+            className="relative text-white flex flex-col items-center gap-0.5 hover:opacity-80 transition-opacity cursor-pointer touch-manipulation"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -161,11 +392,15 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
             )}
           </button>
 
-          {/* Notification */}
-          <div className="relative">
+          {/* Notification Desktop */}
+          <div className="relative" ref={desktopNotifRef}>
             <button
-              onClick={() => setNotifOpen(!notifOpen)}
-              className="text-white flex flex-col items-center gap-0.5 hover:opacity-80 transition-opacity"
+              type="button"
+              onClick={() => {
+                setProfileOpen(false);
+                setNotifOpen((prev) => !prev);
+              }}
+              className="text-white flex flex-col items-center gap-0.5 hover:opacity-80 transition-opacity cursor-pointer touch-manipulation"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -178,80 +413,35 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
               <span className="text-[10px] opacity-80">Notifikasi</span>
               {unreadCount > 0 && (
                 <span
-                  className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center"
+                  className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center"
                   style={{ background: 'var(--color-accent)', color: 'white' }}
                 >
                   {unreadCount}
                 </span>
               )}
             </button>
-            {notifOpen && (
-              <div
-                className="absolute right-0 top-12 w-80 rounded-xl shadow-xl border z-50 overflow-hidden"
-                style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
-              >
-                <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--color-border)' }}>
-                  <span className="font-bold text-xs text-gray-900">Notifikasi</span>
-                  <span className="text-[10px] text-gray-400 font-medium cursor-pointer hover:underline">Tandai dibaca</span>
-                </div>
-                <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
-                  {notifications.map((n) => (
-                    <div
-                      key={n.id}
-                      className={`p-3 flex items-start gap-2.5 hover:bg-black/5 cursor-pointer transition-colors ${!n.sudah_dibaca ? 'bg-[#567257]/5' : ''
-                        }`}
-                    >
-                      <div
-                        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-                        style={{
-                          background:
-                            n.tipe === 'barter' ? '#e07b3915' : n.tipe === 'chat' ? '#56725715' : '#4a8c5c15',
-                          color:
-                            n.tipe === 'barter' ? 'var(--color-accent)' : n.tipe === 'chat' ? 'var(--color-primary)' : '#4a8c5c',
-                        }}
-                      >
-                        {n.tipe === 'barter' && (
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                          </svg>
-                        )}
-                        {n.tipe === 'chat' && (
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                          </svg>
-                        )}
-                        {n.tipe === 'success' && (
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs text-gray-800 leading-snug">{n.teks}</p>
-                        <span className="text-[10px] text-gray-400 mt-0.5 block">{n.waktu}</span>
-                      </div>
-                      {!n.sudah_dibaca && <span className="w-1.5 h-1.5 rounded-full bg-[#e07b39] shrink-0 mt-1" />}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            {notifOpen && renderNotificationDropdown('right-0')}
           </div>
 
-          {/* Conditional Auth Slot: Belum login -> Tombol Masuk, Sudah login -> Foto Profil + Nama */}
+          {/* Conditional Auth Slot */}
           {!currentUser ? (
             <button
+              type="button"
               onClick={() => openAuthModal('login')}
-              className="px-4 py-2 rounded-xl text-xs font-bold text-white shadow-sm transition-all hover:opacity-90 active:scale-95 shrink-0"
+              className="px-4 py-2 rounded-xl text-xs font-bold text-white shadow-sm transition-all hover:opacity-90 active:scale-95 shrink-0 touch-manipulation"
               style={{ background: 'var(--color-accent)', fontFamily: 'var(--font-body)' }}
             >
               Masuk
             </button>
           ) : (
-            <div className="relative">
+            <div className="relative" ref={profileRef}>
               <button
-                onClick={() => setProfileOpen(!profileOpen)}
-                className="flex items-center gap-2 hover:opacity-90 transition-opacity focus:outline-none"
+                type="button"
+                onClick={() => {
+                  setNotifOpen(false);
+                  setProfileOpen((prev) => !prev);
+                }}
+                className="flex items-center gap-2 hover:opacity-90 transition-opacity focus:outline-none cursor-pointer touch-manipulation"
               >
                 <div className="w-7 h-7 rounded-full overflow-hidden border-2 border-white/60 bg-white/20 shrink-0">
                   <img
@@ -270,11 +460,18 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
 
               {profileOpen && (
                 <div
-                  className="absolute right-0 top-11 w-56 rounded-xl shadow-xl border z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+                  className="absolute right-0 top-11 w-56 rounded-xl shadow-xl border z-50 overflow-hidden"
                   style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)', fontFamily: 'var(--font-body)' }}
                 >
                   <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
-                    <p className="text-xs font-bold text-gray-900 truncate">{currentUser.nama}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs font-bold text-gray-900 truncate">{currentUser.nama}</p>
+                      {currentUser.is_verified && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 shrink-0">
+                          ✓
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[10px] text-gray-500 truncate">{currentUser.email}</p>
                     <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-[#567257]/15 text-[#567257]">
                       {currentUser.lokasi}
@@ -283,11 +480,12 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                   <div className="py-1 text-xs text-gray-700 divide-y divide-gray-100">
                     <div>
                       <button
+                        type="button"
                         onClick={() => {
                           setProfileOpen(false);
-                          if (onNavigate) onNavigate('profile');
+                          onNavigate('profile');
                         }}
-                        className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
+                        className="w-full px-4 py-2.5 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
                       >
                         <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -295,11 +493,12 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                         <span>Profil Saya</span>
                       </button>
                       <button
+                        type="button"
                         onClick={() => {
                           setProfileOpen(false);
-                          if (onNavigate) onNavigate('orders');
+                          onNavigate('orders');
                         }}
-                        className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
+                        className="w-full px-4 py-2.5 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
                       >
                         <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
@@ -307,11 +506,12 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                         <span>Pesanan Saya</span>
                       </button>
                       <button
+                        type="button"
                         onClick={() => {
                           setProfileOpen(false);
-                          if (onNavigate) onNavigate('my-items');
+                          onNavigate('my-items');
                         }}
-                        className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
+                        className="w-full px-4 py-2.5 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
                       >
                         <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
@@ -319,26 +519,40 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                         <span>Barang Saya</span>
                       </button>
                       <button
+                        type="button"
                         onClick={() => {
                           setProfileOpen(false);
-                          if (onNavigate) onNavigate('barter');
+                          onNavigate('barter');
                         }}
-                        className="w-full px-4 py-2 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
+                        className="w-full px-4 py-2.5 text-left hover:bg-black/5 flex items-center gap-2 transition-colors"
                       >
                         <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                         </svg>
                         <span>Barter Saya</span>
                       </button>
+                      {currentUser.role === 'admin' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProfileOpen(false);
+                            onNavigate('admin');
+                          }}
+                          className="w-full px-4 py-2.5 text-left hover:bg-amber-50 text-amber-800 font-semibold flex items-center gap-2 transition-colors"
+                        >
+                          <span>⚡ Panel Admin & Flash Barter</span>
+                        </button>
+                      )}
                     </div>
                     <div className="pt-1">
                       <button
+                        type="button"
                         onClick={() => {
                           setProfileOpen(false);
                           logout();
-                          if (onNavigate) onNavigate('home');
+                          onNavigate('home');
                         }}
-                        className="w-full px-4 py-2 text-left text-red-600 hover:bg-red-50 flex items-center gap-2 font-semibold transition-colors"
+                        className="w-full px-4 py-2.5 text-left text-red-600 hover:bg-red-50 flex items-center gap-2 font-semibold transition-colors"
                       >
                         <svg className="w-3.5 h-3.5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
@@ -359,19 +573,20 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
         className="border-t"
         style={{ borderColor: 'rgba(255,255,255,0.15)', background: 'var(--color-primary-dark, #3e5540)' }}
       >
-        <div className="max-w-screen-xl mx-auto px-4 py-1.5 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 overflow-x-auto py-0.5 no-scrollbar">
+        <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-1.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 overflow-x-auto py-0.5">
             <span className="text-[11px] text-white/60 font-medium whitespace-nowrap hidden sm:inline">
               Populer:
             </span>
-            {popularSearches.map(item => (
+            {popularSearches.map((item) => (
               <button
+                type="button"
                 key={item}
                 onClick={() => {
                   setSearch(item);
                   handlePerformSearch(item);
                 }}
-                className="px-3 py-1 rounded-full text-xs font-normal text-white/90 whitespace-nowrap transition-all hover:bg-white/20 hover:text-white cursor-pointer"
+                className="px-3 py-1 rounded-full text-xs font-normal text-white/90 whitespace-nowrap transition-all hover:bg-white/20 hover:text-white cursor-pointer touch-manipulation"
                 style={{
                   background: 'rgba(255,255,255,0.12)',
                   fontFamily: 'var(--font-body)',
@@ -382,11 +597,11 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
             ))}
           </div>
 
-          {/* Tombol Chat & Negosiasi */}
           <div className="shrink-0">
             <button
+              type="button"
               onClick={() => onNavigate('chat')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-90 shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-90 shadow-sm touch-manipulation"
               style={{
                 background: activePage === 'chat' ? '#c8682a' : 'var(--color-accent)',
                 color: 'white',

@@ -32,6 +32,16 @@ export interface User {
   koordinat?: Coordinates;
 }
 
+export interface FlashBarterConfig {
+  id: 'SYS-FLASH-BARTER';
+  is_system_config: true;
+  config_type: 'flash_barter';
+  is_active: boolean;
+  end_time: string; // ISO timestamp berakhirnya sesi Flash Barter
+  item_ids: string[];
+  updated_at?: string;
+}
+
 export interface Item {
   id: string;
   nama: string;
@@ -56,6 +66,13 @@ export interface Item {
   titik_cod?: string;
   terjual?: boolean;
   updated_at?: string;
+
+  // Penanda dokumen konfigurasi sistem (seperti Flash Barter)
+  is_system_config?: boolean;
+  config_type?: string;
+  is_active?: boolean;
+  end_time?: string;
+  item_ids?: string[];
 }
 
 export interface Offer {
@@ -126,7 +143,7 @@ export interface Message {
     targetItemName: string;
     targetItemPrice: number;
     targetItemImage?: string;
-    priceDiff: number; // positif = penawar nambah tunai, negatif = penjual nambah tunai
+    priceDiff: number;
   };
   codMeta?: {
     recommendedSpot: CodSpotRecommendation;
@@ -140,10 +157,12 @@ export interface Message {
 export interface Notification {
   id: string;
   id_user: string;
-  tipe: 'barter' | 'chat' | 'success';
+  tipe: 'barter' | 'chat' | 'success' | 'order';
   teks: string;
   waktu: string;
   sudah_dibaca: boolean;
+  link_page?: 'chat' | 'orders' | 'my-items';
+  target_id?: string;
 }
 
 export interface CartItem {

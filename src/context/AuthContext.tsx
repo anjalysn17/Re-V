@@ -27,7 +27,13 @@ interface AuthContextType {
   login: (identifier: string, password: string) => Promise<AuthResult>;
   quickLogin: (userId: string) => void;
   logout: () => void;
-  register: (data: { nama: string; email: string; password: string; lokasi?: string }) => Promise<AuthResult>;
+  register: (data: {
+    nama: string;
+    email: string;
+    password: string;
+    lokasi?: string;
+    otp?: string;
+  }) => Promise<AuthResult>;
   isAuthModalOpen: boolean;
   authModalMode: 'login' | 'register';
   openAuthModal: (mode?: 'login' | 'register') => void;
@@ -64,6 +70,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return merged;
     });
   };
+
+  // Sinkronisasi otomatis currentUser apabila db.users berubah (misal saat profil/OTP diverifikasi)
+  useEffect(() => {
+    const syncUserFromDB = () => {
+      setCurrentUser((prev) => {
+        if (!prev) return prev;
+        const db = getDB();
+        const fresh = db.users.find((u) => String(u.id) === String(prev.id));
+        if (!fresh) return prev;
+        const merged = { ...prev, ...fresh };
+        if (JSON.stringify(merged) === JSON.stringify(prev)) return prev;
+        try {
+          localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(merged));
+        } catch {
+          /* abaikan */
+        }
+        return merged;
+      });
+    };
+
+    window.addEventListener('rev-db-updated', syncUserFromDB);
+    return () => window.removeEventListener('rev-db-updated', syncUserFromDB);
+  }, []);
 
   useEffect(() => {
     getDB();
@@ -163,6 +192,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     email: string;
     password: string;
     lokasi?: string;
+    otp?: string;
   }): Promise<AuthResult> => {
     if (API_ENABLED) {
       try {
@@ -171,6 +201,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: data.email.trim(),
           password: data.password,
           lokasi: data.lokasi?.trim(),
+          otp: data.otp?.trim(),
         });
         return await finishApiAuth(token, user);
       } catch (err) {
@@ -200,6 +231,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       lokasi: data.lokasi?.trim() || 'Sekaran, Gunungpati',
       rating: 5.0,
       role: 'user',
+      is_verified: Boolean(data.otp),
     };
 
     db.users.push(newUser);

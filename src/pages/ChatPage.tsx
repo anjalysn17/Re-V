@@ -162,8 +162,9 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
             Masuk ke akunmu untuk bernegosiasi barter maupun menentukan titik temu COD bersama penjual.
           </p>
           <button
+            type="button"
             onClick={() => openAuthModal('login')}
-            className="w-full py-3 rounded-xl text-xs font-bold text-white"
+            className="w-full py-3 rounded-xl text-xs font-bold text-white touch-manipulation"
             style={{ background: 'var(--color-primary, #567257)' }}
           >
             Masuk Akun
@@ -217,6 +218,17 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
       conversations: updatedConversations,
       messages: updatedGlobalMessages,
     });
+
+    const partner = resolvePartner(activeConversation);
+    if (partner.id) {
+      dbService.pushNotification({
+        userId: partner.id,
+        tipe: 'chat',
+        teks: `${currentUser.nama || currentUser.name || 'Pengguna'}: ${content}`,
+        link_page: 'chat',
+        target_id: String(activeConversation.id),
+      });
+    }
 
     if (!customText) setMessageText('');
   };
@@ -360,7 +372,10 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
     );
   };
 
-  const handleSelectCodSpotFromCard = (spotName: string, spotCoords?: { lat: number; lng: number }) => {
+  const handleSelectCodSpotFromCard = (
+    spotName: string,
+    spotCoords?: { lat: number; lng: number }
+  ) => {
     if (!activeConversation) return;
     const latestDB = dbService.getDB() as any;
     const updatedConvs = (latestDB.conversations || []).map((c: any) =>
@@ -377,7 +392,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
     handleSendMessage(`📌 Saya setuju titik temu COD di: ${spotName}`);
   };
 
-  // Menyepakati transaksi dari obrolan tanpa stale closure
+  // Menyepakati transaksi dari obrolan & mencatatnya ke riwayat OrdersPage
   const handleConfirmDealFromChat = () => {
     if (!activeConversation) return;
     const latestDB = dbService.getDB() as any;
@@ -399,6 +414,14 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
         freshConv.type === 'barter' ||
         freshConv.barterOfferItem ||
         freshConv.offeredItemTitle
+    );
+
+    const itemId = String(
+      barterData?.targetItemId ??
+        relatedItem?.id ??
+        freshConv.itemId ??
+        freshConv.id_barang ??
+        ''
     );
 
     const itemTitle =
@@ -431,15 +454,20 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
       'Gerbang Utama UNNES (Sekaran)';
 
     addOrderTransaction({
-      userId: buyerId,
+      buyerId,
       buyerName,
       sellerId,
       sellerName,
+      itemId,
       itemTitle,
       itemImage: relatedItem?.foto || relatedItem?.image || freshConv.itemImage,
       type: isBarter ? 'barter' : 'beli',
       price: Number(
-        barterData?.targetItemPrice ?? relatedItem?.harga ?? relatedItem?.price ?? freshConv.itemPrice ?? 0
+        barterData?.targetItemPrice ??
+          relatedItem?.harga ??
+          relatedItem?.price ??
+          freshConv.itemPrice ??
+          0
       ),
       barterOfferTitle:
         barterData?.offeredItemTitle ||
@@ -503,8 +531,9 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                   Mulai chat penjual atau ajukan barter dari halaman detail barang.
                 </p>
                 <button
+                  type="button"
                   onClick={() => go('home')}
-                  className="px-4 py-2 rounded-xl text-xs font-bold text-white"
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-white touch-manipulation"
                   style={{ background: 'var(--color-primary, #567257)' }}
                 >
                   Jelajahi Barang
@@ -524,9 +553,10 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
 
                 return (
                   <button
+                    type="button"
                     key={conv.id}
                     onClick={() => setSelectedConvId(String(conv.id))}
-                    className={`w-full p-3.5 text-left flex items-start gap-3 transition-colors hover:bg-gray-50 ${
+                    className={`w-full p-3.5 text-left flex items-start gap-3 transition-colors hover:bg-gray-50 touch-manipulation ${
                       isSelected ? 'bg-emerald-50/60' : ''
                     }`}
                   >
@@ -584,8 +614,9 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                     <div className="px-4 py-3 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2.5 min-w-0">
                         <button
+                          type="button"
                           onClick={() => setSelectedConvId(null)}
-                          className="md:hidden px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700"
+                          className="md:hidden px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 touch-manipulation"
                         >
                           ←
                         </button>
@@ -618,23 +649,25 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                           onClick={handleRecommendCodSpot}
                           disabled={isRecommendingCod}
                           title="Bagikan lokasi GPS & cari titik tengah COD cerdas"
-                          className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 disabled:opacity-50"
+                          className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 disabled:opacity-50 touch-manipulation"
                         >
                           {isRecommendingCod ? 'Mencari...' : '📍 Titik COD'}
                         </button>
 
                         {!activeConversation.dealConfirmed ? (
                           <button
+                            type="button"
                             onClick={handleConfirmDealFromChat}
-                            className="px-3 py-1.5 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-90"
+                            className="px-3 py-1.5 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-90 touch-manipulation"
                             style={{ background: 'var(--color-primary, #567257)' }}
                           >
                             Sepakati Deal
                           </button>
                         ) : (
                           <button
+                            type="button"
                             onClick={() => go('orders')}
-                            className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 touch-manipulation"
                           >
                             Transaksi ✓
                           </button>
@@ -645,7 +678,13 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                     {codError && (
                       <div className="px-4 py-1.5 bg-red-50 border-t border-red-100 text-[11px] text-red-600 flex items-center justify-between">
                         <span>{codError}</span>
-                        <button onClick={() => setCodError('')} className="font-bold ml-2">✕</button>
+                        <button
+                          type="button"
+                          onClick={() => setCodError('')}
+                          className="font-bold ml-2 touch-manipulation"
+                        >
+                          ✕
+                        </button>
                       </div>
                     )}
 
@@ -678,8 +717,9 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                         </div>
                         {relatedItem && (
                           <button
+                            type="button"
                             onClick={() => go('product', { productId: relatedItem.id })}
-                            className="text-[11px] font-semibold text-emerald-700 hover:underline shrink-0"
+                            className="text-[11px] font-semibold text-emerald-700 hover:underline shrink-0 touch-manipulation"
                           >
                             Lihat Barang
                           </button>
@@ -705,12 +745,16 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                     const text = msg.text || msg.teks || msg.content || '';
                     const barterOffer = msg.barterOffer || msg.offerMeta;
                     const codMeta = msg.codMeta;
-                    const timeStr = msg.createdAt || msg.waktu || msg.timestamp
-                      ? new Date(msg.createdAt || msg.waktu || msg.timestamp).toLocaleTimeString('id-ID', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                      : '';
+                    const timeStr =
+                      msg.createdAt || msg.waktu || msg.timestamp
+                        ? new Date(msg.createdAt || msg.waktu || msg.timestamp).toLocaleTimeString(
+                            'id-ID',
+                            {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            }
+                          )
+                        : '';
 
                     return (
                       <div
@@ -806,7 +850,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                                         lng: sp.lng,
                                       })
                                     }
-                                    className="w-full text-left p-2 rounded-xl border border-gray-200 hover:border-emerald-500 hover:bg-emerald-50/50 transition-colors flex items-center justify-between gap-2"
+                                    className="w-full text-left p-2 rounded-xl border border-gray-200 hover:border-emerald-500 hover:bg-emerald-50/50 transition-colors flex items-center justify-between gap-2 touch-manipulation"
                                   >
                                     <div className="min-w-0">
                                       <p className="font-bold text-gray-900 truncate">{sp.name}</p>
@@ -849,7 +893,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                     key={i}
                     type="button"
                     onClick={() => handleSendMessage(qr)}
-                    className="px-2.5 py-1 rounded-full text-[11px] bg-gray-100 text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 whitespace-nowrap shrink-0 transition-colors"
+                    className="px-2.5 py-1 rounded-full text-[11px] bg-gray-100 text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 whitespace-nowrap shrink-0 transition-colors touch-manipulation"
                   >
                     {qr}
                   </button>
@@ -874,7 +918,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                 <button
                   type="submit"
                   disabled={!messageText.trim()}
-                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-white disabled:opacity-40 transition-opacity shrink-0"
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-white disabled:opacity-40 transition-opacity shrink-0 touch-manipulation"
                   style={{ background: 'var(--color-primary, #567257)' }}
                 >
                   Kirim

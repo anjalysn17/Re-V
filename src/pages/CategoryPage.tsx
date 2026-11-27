@@ -7,6 +7,15 @@ interface CategoryPageProps {
   onNavigate: (page: string, params?: any) => void;
 }
 
+const ALL_CATEGORIES = [
+  { label: 'Elektronik', icon: '/elektronik.jpg' },
+  { label: 'Buku & Alat Tulis', icon: '/bukk.jpg' },
+  { label: 'Fashion', icon: '/bajuu.jpg' },
+  { label: 'Perlengkapan', icon: '/perlengkapan.jpg' },
+  { label: 'Tas', icon: '/tas.jpg' },
+  { label: 'Lainnya', icon: '/assets/seed-images/placeholder.svg' },
+];
+
 function parseSafePrice(raw: unknown): number {
   if (typeof raw === 'number' && Number.isFinite(raw)) {
     return Math.max(0, Math.round(raw));
@@ -43,183 +52,282 @@ function resolveGrade(kondisi?: string): 'A' | 'B' | 'C' {
 }
 
 export default function CategoryPage({ category, onNavigate }: CategoryPageProps) {
-  const db = getDB();
-  const [selectedLocation, setSelectedLocation] = useState<string>('Semua');
+  const [offerFilter, setOfferFilter] = useState<'all' | 'jual' | 'barter'>('all');
+  const [gradeFilter, setGradeFilter] = useState<'all' | 'A' | 'B' | 'C'>('all');
+  const [sortBy, setSortBy] = useState<'newest' | 'price_asc' | 'price_desc'>('newest');
+  const [hideSold, setHideSold] = useState<boolean>(false);
 
-  // Filter produk berdasarkan kategori menggunakan pencocokan string persis (sesuai kontrak PAKEM)
-  const filteredItems = useMemo(() => {
-    return db.items.filter(item => {
-      if (!item.kategori || !category) return false;
-      return item.kategori.toLowerCase().trim() === category.toLowerCase().trim();
+  const db = getDB() as any;
+  const activeCategory = category || 'Elektronik';
+
+  const categoryProducts = useMemo(() => {
+    const items: any[] = db.items || [];
+    const targetCat = activeCategory.toLowerCase().trim();
+
+    return items
+      .filter((item) => {
+        const itemCat = String(item.kategori || item.category || 'Lainnya')
+          .toLowerCase()
+          .trim();
+
+        if (targetCat === 'lainnya') {
+          const knownCats = ['elektronik', 'buku & alat tulis', 'fashion', 'perlengkapan', 'tas'];
+          return itemCat === 'lainnya' || !knownCats.some((k) => itemCat.includes(k));
+        }
+
+        return (
+          itemCat === targetCat ||
+          itemCat.includes(targetCat) ||
+          targetCat.includes(itemCat)
+        );
+      })
+      .map((item, idx) => {
+        const numericPrice = parseSafePrice(item.harga ?? item.price ?? 0);
+        const rawStatus = String(item.status || '').toLowerCase();
+        const offerType =
+          item.transactionType ||
+          (['jual', 'barter', 'keduanya'].includes(rawStatus) ? rawStatus : 'jual');
+        const fullLocation = (item.lokasi || item.location || 'Kampus UNNES').trim();
+        const shortLocation = fullLocation.split(',')[0].trim() || 'Kampus UNNES';
+
+        return {
+          id: item.id,
+          name: item.nama || item.title || item.nama_barang || 'Tanpa Nama',
+          numericPrice,
+          price:
+            numericPrice === 0 && offerType === 'barter'
+              ? 'Khusus Barter'
+              : `Rp ${numericPrice.toLocaleString('id-ID')}`,
+          location: shortLocation,
+          img: item.foto || item.image || '/assets/seed-images/placeholder.svg',
+          grade: resolveGrade(item.kondisi),
+          offerType,
+          canSell: offerType === 'jual' || offerType === 'keduanya',
+          canBarter: offerType === 'barter' || offerType === 'keduanya',
+          isSold: isItemSold(item),
+          createdAt: item.createdAt || item.tanggal || '',
+          orderIndex: idx,
+        };
+      });
+  }, [db.items, activeCategory]);
+
+  const filteredAndSorted = useMemo(() => {
+    const list = categoryProducts.filter((p) => {
+      if (hideSold && p.isSold) return false;
+      if (offerFilter === 'jual' && !p.canSell) return false;
+      if (offerFilter === 'barter' && !p.canBarter) return false;
+      if (gradeFilter !== 'all' && p.grade !== gradeFilter) return false;
+      return true;
     });
-  }, [db.items, category]);
 
-  const allProducts = useMemo(() => {
-    return filteredItems.map((rawItem, idx) => {
-      const item = rawItem as any;
-      const itemName = item.nama || item.title || item.nama_barang || 'Barang Tanpa Nama';
-      const numericPrice = parseSafePrice(item.harga ?? item.price ?? 0);
+    if (sortBy === 'price_asc') {
+      return [...list].sort((a, b) => a.numericPrice - b.numericPrice);
+    }
+    if (sortBy === 'price_desc') {
+      return [...list].sort((a, b) => b.numericPrice - a.numericPrice);
+    }
+    return list;
+  }, [categoryProducts, hideSold, offerFilter, gradeFilter, sortBy]);
 
-      const fullLocation = (item.lokasi || 'Kampus UNNES').trim();
-      const shortLocation = fullLocation.split(',')[0].trim() || 'Kampus UNNES';
-
-      const grade = resolveGrade(item.kondisi);
-      const rawStatus = String(item.status || '').toLowerCase();
-      const offerType =
-        item.transactionType ||
-        (['jual', 'barter', 'keduanya'].includes(rawStatus) ? rawStatus : 'jual');
-      const isBarter = offerType === 'barter' || offerType === 'keduanya';
-      const soldFlag = isItemSold(item);
-
-      return {
-        id: item.id,
-        name: itemName,
-        price:
-          numericPrice === 0 && offerType === 'barter'
-            ? 'Khusus Barter'
-            : `Rp ${numericPrice.toLocaleString('id-ID')}`,
-        location: shortLocation,
-        img: item.foto || '/assets/seed-images/placeholder.svg',
-        grade,
-        barter: isBarter,
-        isSold: soldFlag,
-        sold: (idx % 8) + 2,
-        kategori: item.kategori,
-      };
-    });
-  }, [filteredItems]);
-
-  // Daftar lokasi unik untuk filter titik COD di kategori aktif
-  const availableLocations = useMemo(() => {
-    const unique = Array.from(new Set(allProducts.map(p => p.location).filter(Boolean)));
-    return ['Semua', ...unique];
-  }, [allProducts]);
-
-  const activeLocation = availableLocations.includes(selectedLocation) ? selectedLocation : 'Semua';
-
-  const products = useMemo(() => {
-    if (activeLocation === 'Semua') return allProducts;
-    return allProducts.filter(p => p.location === activeLocation);
-  }, [allProducts, activeLocation]);
+  const resetFilters = () => {
+    setOfferFilter('all');
+    setGradeFilter('all');
+    setSortBy('newest');
+    setHideSold(false);
+  };
 
   return (
-    <div className="max-w-screen-xl mx-auto px-4 py-6 space-y-6">
-      {/* Breadcrumb & Navigasi Kembali */}
-      <nav className="flex items-center gap-2 text-xs text-gray-500">
+    <div className="max-w-screen-xl mx-auto px-4 py-5 space-y-6">
+      {/* Breadcrumb & Tombol Kembali */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <button
+          type="button"
           onClick={() => onNavigate('home')}
-          className="hover:text-gray-900 transition-colors flex items-center gap-1 font-medium cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 hover:text-gray-900 py-1 touch-manipulation"
         >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-          </svg>
-          <span>Beranda</span>
+          <span>←</span> Beranda
         </button>
-        <span>/</span>
-        <span>Kategori</span>
-        <span>/</span>
-        <span className="text-gray-900 font-bold">{category}</span>
-      </nav>
+        <span className="text-xs text-gray-400">
+          Kategori / <strong className="text-gray-700">{activeCategory}</strong>
+        </span>
+      </div>
 
-      {/* Header Kategori & Filter Lokasi */}
+      {/* Header Banner Kategori */}
       <div
-        className="border-b pb-4 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3"
-        style={{ borderColor: 'var(--color-border)' }}
+        className="rounded-2xl p-5 sm:p-7 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm"
+        style={{ background: 'linear-gradient(135deg, #3e5540 0%, var(--color-primary) 100%)' }}
       >
         <div>
+          <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-white/15 mb-2">
+            Jelajah Kategori
+          </span>
           <h1
-            className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight"
+            className="text-2xl sm:text-3xl font-black tracking-tight"
             style={{ fontFamily: 'var(--font-display)' }}
           >
-            {category}
+            {activeCategory}
           </h1>
-          <p className="text-xs text-gray-500 mt-1">
-            Menampilkan {products.length} barang dalam kategori {category}
-            {activeLocation !== 'Semua' ? ` di area ${activeLocation}` : ''}
+          <p className="text-xs sm:text-sm text-white/85 mt-1">
+            Menampilkan {filteredAndSorted.length} dari {categoryProducts.length} barang tersedia di sekitar kampus
           </p>
         </div>
 
-        {availableLocations.length > 1 && (
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[11px] font-medium text-gray-500 mr-1">Lokasi COD:</span>
-            {availableLocations.map(loc => {
-              const active = activeLocation === loc;
-              return (
-                <button
-                  key={loc}
-                  type="button"
-                  onClick={() => setSelectedLocation(loc)}
-                  className="px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors cursor-pointer"
-                  style={
-                    active
-                      ? {
-                          background: 'var(--color-primary)',
-                          borderColor: 'var(--color-primary)',
-                          color: 'white',
-                        }
-                      : {
-                          background: 'var(--color-card)',
-                          borderColor: 'var(--color-border)',
-                          color: '#4b5563',
-                        }
-                  }
-                >
-                  {loc}
-                </button>
-              );
-            })}
-          </div>
-        )}
+        <button
+          type="button"
+          onClick={() => onNavigate('barter')}
+          className="self-start sm:self-center min-h-[40px] px-4 py-2 rounded-xl text-xs font-bold bg-white hover:bg-gray-100 transition-colors shrink-0 touch-manipulation"
+          style={{ color: 'var(--color-primary)' }}
+        >
+          ⇄ Cek Kecocokan Barter
+        </button>
       </div>
 
-      {/* Grid Produk atau Empty State */}
-      {products.length === 0 ? (
+      {/* Navigasi Cepat Antar Kategori */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        {ALL_CATEGORIES.map((cat) => {
+          const isCurrent = cat.label.toLowerCase() === activeCategory.toLowerCase();
+          return (
+            <button
+              type="button"
+              key={cat.label}
+              onClick={() => onNavigate('category', cat.label)}
+              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border shrink-0 transition-all touch-manipulation ${
+                isCurrent
+                  ? 'text-white shadow-xs'
+                  : 'bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+              style={
+                isCurrent
+                  ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' }
+                  : { borderColor: 'var(--color-border)' }
+              }
+            >
+              <img
+                src={cat.icon}
+                alt={cat.label}
+                className="w-5 h-5 rounded-md object-cover bg-gray-100"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
+                }}
+              />
+              <span>{cat.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Bar Filter & Urutkan */}
+      <div
+        className="rounded-2xl p-4 border flex flex-col md:flex-row md:items-center justify-between gap-3"
+        style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Filter Jenis Penawaran */}
+          <div className="inline-flex rounded-xl bg-gray-100 p-1">
+            {[
+              { id: 'all', label: 'Semua' },
+              { id: 'jual', label: 'Dijual' },
+              { id: 'barter', label: 'Bisa Barter' },
+            ].map((opt) => (
+              <button
+                type="button"
+                key={opt.id}
+                onClick={() => setOfferFilter(opt.id as any)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors touch-manipulation ${
+                  offerFilter === opt.id
+                    ? 'bg-white text-gray-900 shadow-xs'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Filter Grade */}
+          <select
+            aria-label="Filter Grade Kondisi"
+            value={gradeFilter}
+            onChange={(e) => setGradeFilter(e.target.value as any)}
+            className="px-3 py-2 rounded-xl border bg-white text-xs font-semibold text-gray-700 focus:outline-none cursor-pointer"
+            style={{ borderColor: 'var(--color-border)' }}
+          >
+            <option value="all">Semua Grade</option>
+            <option value="A">Grade A (Seperti Baru)</option>
+            <option value="B">Grade B (Layak Pakai)</option>
+            <option value="C">Grade C (Cacat Minor)</option>
+          </select>
+
+          {/* Sembunyikan Terjual */}
+          <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border bg-white text-xs font-semibold text-gray-700 cursor-pointer select-none" style={{ borderColor: 'var(--color-border)' }}>
+            <input
+              type="checkbox"
+              checked={hideSold}
+              onChange={(e) => setHideSold(e.target.checked)}
+              className="accent-emerald-700"
+            />
+            <span>Sembunyikan Terjual</span>
+          </label>
+        </div>
+
+        {/* Urutkan */}
+        <div className="flex items-center gap-2 self-start md:self-auto">
+          <span className="text-xs text-gray-500 whitespace-nowrap">Urutkan:</span>
+          <select
+            aria-label="Urutkan Barang"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as any)}
+            className="px-3 py-2 rounded-xl border bg-white text-xs font-semibold text-gray-700 focus:outline-none cursor-pointer"
+            style={{ borderColor: 'var(--color-border)' }}
+          >
+            <option value="newest">Terbaru</option>
+            <option value="price_asc">Harga Terendah</option>
+            <option value="price_desc">Harga Tertinggi</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Grid Produk Kategori */}
+      {filteredAndSorted.length === 0 ? (
         <div
-          className="p-12 rounded-2xl border text-center space-y-4 my-6"
+          className="p-10 sm:p-12 rounded-2xl border text-center space-y-3"
           style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
         >
-          <div className="w-14 h-14 rounded-full bg-[#567257]/10 text-[#567257] flex items-center justify-center mx-auto">
-            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-            </svg>
-          </div>
-          <div className="space-y-1">
-            <h3 className="text-base font-bold text-gray-800">
-              {activeLocation !== 'Semua'
-                ? `Belum ada barang di area ${activeLocation}`
-                : `Belum ada barang di kategori ${category}`}
-            </h3>
-            <p className="text-xs text-gray-500 max-w-sm mx-auto">
-              {activeLocation !== 'Semua'
-                ? 'Coba pilih filter "Semua" untuk melihat barang di titik COD kampus lainnya.'
-                : 'Belum ada pengguna yang memasang iklan untuk kategori ini. Yuk, jadi yang pertama upload barang!'}
-            </p>
-          </div>
-          {activeLocation !== 'Semua' ? (
+          <h3 className="text-base font-bold text-gray-800">
+            Belum ada barang yang sesuai pada kategori {activeCategory}
+          </h3>
+          <p className="text-xs text-gray-500 max-w-md mx-auto">
+            Coba atur ulang filter kondisi/penawaran di atas atau jelajahi kategori barang kampus lainnya.
+          </p>
+          <div className="flex items-center justify-center gap-2 pt-2">
+            {(offerFilter !== 'all' || gradeFilter !== 'all' || hideSold) && (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="min-h-[40px] px-4 py-2 rounded-xl text-xs font-bold text-white touch-manipulation"
+                style={{ background: 'var(--color-primary)' }}
+              >
+                Reset Filter
+              </button>
+            )}
             <button
-              onClick={() => setSelectedLocation('Semua')}
-              className="mt-2 px-5 py-2.5 rounded-xl text-xs font-bold border hover:bg-black/5 transition-colors cursor-pointer"
-              style={{ borderColor: 'var(--color-border)', color: 'var(--color-primary)' }}
-            >
-              Tampilkan Semua Lokasi
-            </button>
-          ) : (
-            <button
+              type="button"
               onClick={() => onNavigate('home')}
-              className="mt-2 px-5 py-2.5 rounded-xl text-xs font-bold border hover:bg-black/5 transition-colors cursor-pointer"
-              style={{ borderColor: 'var(--color-border)', color: 'var(--color-primary)' }}
+              className="min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold border bg-white text-gray-700 hover:bg-gray-50 touch-manipulation"
+              style={{ borderColor: 'var(--color-border)' }}
             >
-              ← Kembali ke Beranda
+              Kembali ke Beranda
             </button>
-          )}
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-          {products.map((product) => (
+          {filteredAndSorted.map((product) => (
             <button
+              type="button"
               key={product.id}
               onClick={() => onNavigate('product', { productId: product.id })}
-              className={`rounded-2xl border overflow-hidden text-left group hover:shadow-lg hover:-translate-y-1 transition-all duration-200 cursor-pointer ${
+              className={`rounded-2xl border overflow-hidden text-left group hover:shadow-lg hover:-translate-y-1 transition-all duration-200 cursor-pointer touch-manipulation ${
                 product.isSold ? 'opacity-75' : ''
               }`}
               style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
@@ -229,21 +337,28 @@ export default function CategoryPage({ category, onNavigate }: CategoryPageProps
                   src={product.img}
                   alt={product.name}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  onError={e => {
+                  onError={(e) => {
                     (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
                   }}
                 />
                 <div className="absolute top-2 left-2 flex flex-col gap-1">
                   <span
-                    className="px-2 py-0.5 rounded-full text-[10px] font-bold"
-                    style={{ background: product.grade === 'A' ? 'var(--color-primary)' : '#c9852b', color: 'white' }}
+                    className="px-2 py-0.5 rounded-full text-[10px] font-bold text-white"
+                    style={{
+                      background:
+                        product.grade === 'A'
+                          ? 'var(--color-primary)'
+                          : product.grade === 'B'
+                          ? '#c9852b'
+                          : '#6b7280',
+                    }}
                   >
                     Grade {product.grade}
                   </span>
-                  {product.barter && (
+                  {product.canBarter && (
                     <span
-                      className="px-2 py-0.5 rounded-full text-[10px] font-bold"
-                      style={{ background: 'rgba(0,0,0,0.6)', color: 'white' }}
+                      className="px-2 py-0.5 rounded-full text-[10px] font-bold text-white"
+                      style={{ background: 'rgba(0,0,0,0.6)' }}
                     >
                       Barter
                     </span>
@@ -255,16 +370,19 @@ export default function CategoryPage({ category, onNavigate }: CategoryPageProps
                   )}
                 </div>
               </div>
+
               <div className="p-3">
-                <p className="text-sm font-semibold leading-snug line-clamp-2 min-h-[2.5rem]">{product.name}</p>
+                <p className="text-sm font-semibold leading-snug line-clamp-2 min-h-[2.5rem] text-gray-900">
+                  {product.name}
+                </p>
                 <p
-                  className="text-sm sm:text-base font-black mt-1.5 tabular-nums break-words"
+                  className="text-sm sm:text-base font-black mt-1.5 break-words"
                   style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-display)' }}
                 >
                   {product.price}
                 </p>
-                <div className="flex items-center justify-between gap-1 mt-2">
-                  <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#f0ebe2] text-[11px] text-gray-600 max-w-[70%]">
+                <div className="mt-2">
+                  <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#f0ebe2] text-[11px] text-gray-600 max-w-full">
                     <svg className="w-3 h-3 shrink-0 fill-current text-gray-500" viewBox="0 0 20 20">
                       <path
                         fillRule="evenodd"
@@ -274,9 +392,6 @@ export default function CategoryPage({ category, onNavigate }: CategoryPageProps
                     </svg>
                     <span className="truncate">{product.location}</span>
                   </div>
-                  <span className="text-[10px] shrink-0" style={{ color: 'var(--color-muted)' }}>
-                    {product.sold} terjual
-                  </span>
                 </div>
               </div>
             </button>
@@ -284,7 +399,7 @@ export default function CategoryPage({ category, onNavigate }: CategoryPageProps
         </div>
       )}
 
-      <Footer />
+      <Footer onNavigate={onNavigate} />
     </div>
   );
 }

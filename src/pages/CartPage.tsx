@@ -34,7 +34,6 @@ const DEFAULT_COD_SPOTS = [
   'Area Kos Patemon (Sesuai Kesepakatan Chat)',
 ];
 
-// Sanitasi harga agar string berformat titik/koma (mis. "150.000") tidak terpotong menjadi 150
 function parseSafePrice(raw: unknown): number {
   if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0;
   if (typeof raw === 'string') {
@@ -44,7 +43,6 @@ function parseSafePrice(raw: unknown): number {
   return 0;
 }
 
-// Ambil konfigurasi lokasi aktif web/pengguna jika sudah diatur di profil atau header
 function getConfiguredWebLocation(currentUser: any): string {
   try {
     const savedLoc = localStorage.getItem('rev_selected_location');
@@ -57,7 +55,6 @@ function getConfiguredWebLocation(currentUser: any): string {
   return currentUser?.lokasi?.trim() || '';
 }
 
-// Simpan perubahan keranjang melalui saveDB() agar otomatis sinkron ke server saat API_ENABLED
 function persistCartChanges(updatedCartArray: any[]) {
   const db = dbService.getDB() as any;
   const updatedDB = { ...db, cart: updatedCartArray };
@@ -67,7 +64,6 @@ function persistCartChanges(updatedCartArray: any[]) {
     return;
   }
 
-  // Fallback menggunakan key kontrak PAKEM ('jualbeliDB')
   localStorage.setItem('jualbeliDB', JSON.stringify(updatedDB));
 }
 
@@ -97,7 +93,6 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
       const targetItemId = String(entry.id_item ?? entry.itemId ?? entry.productId ?? '');
       const product = allItems.find((it) => String(it.id) === targetItemId) || entry;
 
-      // Pertahankan pembacaan field asli (PAKEM A.5) maupun alias server
       const sellerId =
         product.id_pemilik ?? product.id_user ?? product.sellerId ?? product.ownerId;
       const sellerObj = allUsers.find((u) => String(u.id) === String(sellerId));
@@ -145,14 +140,11 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
 
   useEffect(() => {
     loadCart();
-
-    // Dengarkan pembaruan dari polling/sinkronisasi server
     const handleDbUpdated = () => loadCart();
     window.addEventListener('rev-db-updated', handleDbUpdated);
     return () => window.removeEventListener('rev-db-updated', handleDbUpdated);
   }, [currentUser]);
 
-  // Gabungkan titik COD bawaan dengan lokasi barang di keranjang & konfigurasi lokasi web
   const availableCodSpots = useMemo(() => {
     const spots: string[] = [];
     const webLoc = getConfiguredWebLocation(currentUser);
@@ -175,14 +167,12 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
     return spots;
   }, [cartItems, currentUser]);
 
-  // Sesuaikan pilihan default titik COD bila daftar spot berubah dan pilihan lama tidak ada
   useEffect(() => {
     if (availableCodSpots.length > 0 && !availableCodSpots.includes(selectedCodSpot)) {
       setSelectedCodSpot(availableCodSpots[0]);
     }
   }, [availableCodSpots, selectedCodSpot]);
 
-  // Ambil koordinat khusus jika titik yang dipilih berasal dari barang yang punya koordinat GPS
   const activeMapCoords = useMemo(() => {
     if (selectedCodSpot.startsWith('Lokasi Barang (')) {
       const matchedItem = cartItems.find(
@@ -263,29 +253,29 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
         ? `${selectedCodSpot} (Catatan: ${buyerNote.trim()})`
         : selectedCodSpot;
 
-      // 1. Catat setiap item keranjang ke riwayat transaksi (OrdersPage)
       cartItems.forEach((item) => {
         addOrderTransaction({
-          userId: String(currentUser.id),
+          buyerId: String(currentUser.id),
+          buyerName: currentUser.nama || currentUser.name || 'Mahasiswa UNNES',
           sellerId: item.sellerId,
           sellerName: item.sellerName,
+          itemId: item.itemId,
           itemTitle: item.quantity > 1 ? `${item.title} (${item.quantity}x)` : item.title,
           itemImage: item.image,
           type: item.type,
           price: item.price * item.quantity,
           barterOfferTitle: item.barterOfferTitle,
           codLocation: codInfo,
+          ...(item.koordinat ? { codCoordinates: item.koordinat } : {}),
         });
       });
 
-      // 2. Kosongkan item milik akun yang sedang login dari keranjang
       const db = dbService.getDB() as any;
       const otherUsersCart = (db.cart || []).filter(
         (c: any) => String(c.id_user ?? c.userId) !== String(currentUser.id)
       );
       persistCartChanges(otherUsersCart);
 
-      // 3. Perbarui tampilan & arahkan ke halaman Transaksi Saya
       setCartItems([]);
       if (onCartUpdated) onCartUpdated();
       alert('Transaksi berhasil dibuat! Silakan koordinasikan jadwal COD dengan penjual.');
@@ -304,8 +294,9 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
             Masuk terlebih dahulu untuk melihat dan menyelesaikan transaksi barang di keranjangmu.
           </p>
           <button
+            type="button"
             onClick={() => openAuthModal('login')}
-            className="w-full py-3 rounded-xl text-xs font-bold text-white"
+            className="w-full py-3 rounded-xl text-xs font-bold text-white touch-manipulation"
             style={{ background: 'var(--color-primary, #567257)' }}
           >
             Masuk ke Akun
@@ -345,8 +336,9 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
             Jelajahi perlengkapan kos, buku kuliah, atau elektronik bekas layak pakai di sekitar UNNES.
           </p>
           <button
+            type="button"
             onClick={() => onNavigate('home')}
-            className="px-5 py-2.5 rounded-xl text-xs font-bold text-white"
+            className="px-5 py-2.5 rounded-xl text-xs font-bold text-white touch-manipulation"
             style={{ background: 'var(--color-primary, #567257)' }}
           >
             Mulai Cari Barang
@@ -354,7 +346,6 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Kolom Kiri: Daftar Item di Keranjang */}
           <div className="lg:col-span-2 space-y-3">
             {cartItems.map((item) => (
               <div
@@ -386,9 +377,10 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                       )}
                     </div>
                     <button
+                      type="button"
                       onClick={() => handleRemoveItem(item.cartId, item.itemId)}
                       title="Hapus dari keranjang"
-                      className="text-xs text-red-500 hover:text-red-700 font-medium shrink-0 px-1.5 py-0.5"
+                      className="text-xs text-red-500 hover:text-red-700 font-medium shrink-0 px-1.5 py-0.5 touch-manipulation"
                     >
                       Hapus
                     </button>
@@ -408,12 +400,12 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                         : `Rp ${(item.price * item.quantity).toLocaleString('id-ID')}`}
                     </p>
 
-                    {/* Kontrol Jumlah Barang */}
                     {!item.isSold && (
                       <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1">
                         <button
+                          type="button"
                           onClick={() => handleUpdateQty(item.cartId, item.itemId, -1)}
-                          className="w-6 h-6 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-200 rounded"
+                          className="w-6 h-6 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-200 rounded touch-manipulation"
                         >
                           -
                         </button>
@@ -421,8 +413,9 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                           {item.quantity}
                         </span>
                         <button
+                          type="button"
                           onClick={() => handleUpdateQty(item.cartId, item.itemId, 1)}
-                          className="w-6 h-6 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-200 rounded"
+                          className="w-6 h-6 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-200 rounded touch-manipulation"
                         >
                           +
                         </button>
@@ -434,7 +427,6 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
             ))}
           </div>
 
-          {/* Kolom Kanan: Pengaturan Lokasi COD & Ringkasan Checkout */}
           <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm h-fit space-y-4">
             <h2 className="text-sm font-bold text-gray-900 border-b border-gray-100 pb-3">
               Ringkasan & Titik Lokasi COD
@@ -457,7 +449,6 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
               </select>
             </div>
 
-            {/* Pratinjau OpenStreetMap Embed untuk Titik COD */}
             <OsmMapEmbed
               locationName={selectedCodSpot}
               coordinates={activeMapCoords}
@@ -501,9 +492,10 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
             )}
 
             <button
+              type="button"
               onClick={handleCheckout}
               disabled={isProcessing || hasSoldItems}
-              className="w-full py-3 rounded-xl text-xs font-bold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="w-full py-3 rounded-xl text-xs font-bold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50 touch-manipulation"
               style={{ background: 'var(--color-primary, #567257)' }}
             >
               {isProcessing ? 'Memproses...' : `Checkout Sekarang (${totalCount})`}

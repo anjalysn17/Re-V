@@ -1,8 +1,14 @@
-import { JualBeliDB } from '../types/database';
+import {
+  JualBeliDB,
+  Item,
+  Notification,
+  FlashBarterConfig,
+} from '../types/database';
 import { API_ENABLED, notifyLocalChange, resetLocalCacheForApi } from './api';
 
 export const DB_STORAGE_KEY = 'jualbeliDB';
 export const CURRENT_USER_KEY = 'currentUser';
+export const FLASH_BARTER_DOC_ID = 'SYS-FLASH-BARTER';
 
 export const INITIAL_SEED: JualBeliDB = {
   users: [
@@ -104,6 +110,10 @@ export function getDB(): JualBeliDB {
       db.cart = [];
       updated = true;
     }
+    if (!Array.isArray(db.notifications)) {
+      db.notifications = [];
+      updated = true;
+    }
 
     db.users = db.users.map((u) => {
       if (!u.role) {
@@ -187,7 +197,6 @@ export function getDB(): JualBeliDB {
 export function saveDB(db: JualBeliDB): void {
   try {
     localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(db));
-    // Pemicu instan agar komponen yang terbuka langsung me-render perubahan tanpa refresh
     window.dispatchEvent(new Event('rev-db-updated'));
     if (API_ENABLED) notifyLocalChange();
   } catch (error) {
@@ -212,7 +221,6 @@ export function resetDB(): JualBeliDB {
 
 /**
  * Generator ID anti-bentrok berbasis UUID/timestamp+acak.
- * Mengatasi bug tabrakan ID antar pengguna saat mode visibilitas parsial aktif.
  */
 export function generateId(prefix: string, _existingList?: { id: string }[]): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -255,4 +263,141 @@ export function resolveGrade(kondisi?: string): 'A' | 'B' | 'C' {
     return 'C';
   }
   return 'B';
+}
+
+/**
+ * Helper terpusat untuk mengecek apakah barang sudah terjual / habis.
+ */
+export function isItemSold(item?: Partial<Item> | null): boolean {
+  if (!item) return true;
+  return item.terjual === true || item.status === 'sold';
+}
+
+/**
+ * Mengembalikan daftar barang katalog publik (mengecualikan dokumen konfigurasi sistem seperti Flash Barter).
+ */
+export function getCatalogItems(db: JualBeliDB): Item[] {
+  if (!Array.isArray(db.items)) return [];
+  return db.items.filter(
+    (item) => item && item.id !== FLASH_BARTER_DOC_ID && !item.is_system_config
+  );
+}
+
+/**
+ * Membaca konfigurasi Flash Barter yang diatur oleh Admin.
+ */
+export function getFlashBarterConfig(db?: JualBeliDB): FlashBarterConfig {
+  const source = db ?? getDB();
+  const doc = Array.isArray(source.items)
+    ? source.items.find((i) => i && (i.id === FLASH_BARTER_DOC_ID || i.config_type === 'flash_barter'))
+    : undefined;
+
+  if (doc) {
+    return {
+      id: FLASH_BARTER_DOC_ID,
+      is_system_config: true,
+      config_type: 'flash_barter',
+      is_active: Boolean(doc.is_active),
+      end_time: typeof doc.end_time === 'string' ? doc.end_time : new Date(Date.now() + 2 * 3600_000).toISOString(),
+      item_ids: Array.isArray(doc.item_ids) ? doc.item_ids.map(String) : [],
+      updated_at: doc.updated_at,
+    };
+  }
+
+  return {
+    id: FLASH_BARTER_DOC_ID,
+    is_system_config: true,
+    config_type: 'flash_barter',
+    is_active: false,
+    end_time: new Date(Date.now() + 2 * 3600_000).toISOString(),
+    item_ids: [],
+  };
+}
+
+/**
+ * Menyimpan konfigurasi Flash Barter oleh Admin dan memicu sinkronisasi.
+ */
+export function saveFlashBarterConfig(config: {
+  is_active: boolean;
+  end_time: string;
+  item_ids: string[];
+}): FlashBarterConfig {
+  const db = getDB();
+  if (!Array.isArray(db.items)) db.items = [];
+
+  const nextConfig: FlashBarterConfig = {
+    id: FLASH_BARTER_DOC_ID,
+    is_system_config: true,
+    config_type: 'flash_barter',
+    is_active: Boolean(config.is_active),
+    end_time: config.end_time,
+    item_ids: [...new Set(config.item_ids.map(String))],
+    updated_at: new Date().toISOString(),
+  };
+
+  const idx = db.items.findIndex((i) => i && i.id === FLASH_BARTER_DOC_ID);
+  if (idx >= 0) {
+    db.items[idx] = nextConfig as unknown as Item;
+  } else {
+    db.items.unshift(nextConfig as unknown as Item);
+  }
+
+  saveDB(db);
+  return nextConfig;
+}
+
+/**
+ * Helper terpusat untuk mengirim notifikasi nyata (chat, barter, pembaruan pesanan)
+ * dan langsung memperbarui UI/sinkronisasi.
+ */
+export function pushNotification(params: {
+  userId: string;
+  tipe: 'barter' | 'chat' | 'success' | 'order';
+  teks: string;
+  link_page?: 'chat' | 'orders' | 'my-items';
+  target_id?: string;
+}): Notification | null {
+  if (!params.userId || !params.teks.trim()) return null;
+  const db = getDB();
+  if (!Array.isArray(db.notifications)) db.notifications = [];
+
+  const notif: Notification = {
+    id: generateId('NTF'),
+    id_user: String(params.userId),
+    tipe: params.tipe,
+    teks: params.teks.trim().slice(0, 450),
+    waktu: new Date().toISOString(),
+    sudah_dibaca: false,
+    ...(params.link_page ? { link_page: params.link_page } : {}),
+    ...(params.target_id ? { target_id: params.target_id } : {}),
+  };
+
+  db.notifications.unshift(notif);
+  // Batasi maksimal 100 notifikasi terbaru di cache agar localStorage tetap ringan
+  if (db.notifications.length > 100) {
+    db.notifications = db.notifications.slice(0, 100);
+  }
+  saveDB(db);
+  return notif;
+}
+
+/**
+ * Menandai satu atau semua notifikasi milik user sebagai sudah dibaca.
+ */
+export function markNotificationsRead(userId: string, notifId?: string): void {
+  const db = getDB();
+  if (!Array.isArray(db.notifications)) return;
+  let changed = false;
+
+  db.notifications = db.notifications.map((n) => {
+    if (String(n.id_user) !== String(userId)) return n;
+    if (notifId && n.id !== notifId) return n;
+    if (!n.sudah_dibaca) {
+      changed = true;
+      return { ...n, sudah_dibaca: true };
+    }
+    return n;
+  });
+
+  if (changed) saveDB(db);
 }
