@@ -12,7 +12,8 @@ export const API_URL: string = String(import.meta.env.VITE_API_URL ?? '')
   .replace(/\/+$/, '');
 export const API_ENABLED: boolean = API_URL.length > 0;
 
-// Urutan penting: conversations harus sebelum messages (server memeriksa peserta percakapan).
+// Urutan penting: conversations harus sebelum messages (server memeriksa peserta percakapan),
+// dan settings di akhir untuk menyimpan konfigurasi sistem seperti SET-flash_barter.
 const SYNC_ORDER = [
   'users',
   'items',
@@ -22,6 +23,7 @@ const SYNC_ORDER = [
   'notifications',
   'cart',
   'orders',
+  'settings',
 ] as const;
 type CollectionName = (typeof SYNC_ORDER)[number];
 
@@ -104,12 +106,12 @@ export const apiSendOtp = (email: string, mode: 'register' | 'verify-existing' =
     body: JSON.stringify({ email, mode }),
   });
 
-export const apiVerifyOtp = (email: string, otp: string) =>
+export const apiVerifyOtp = (email: string, code: string) =>
   request<{ ok: boolean; verified: boolean; message: string; user?: Record<string, unknown> | null }>(
     '/auth/verify-otp',
     {
       method: 'POST',
-      body: JSON.stringify({ email, otp }),
+      body: JSON.stringify({ email, code, otp: code }),
     }
   );
 
@@ -119,51 +121,58 @@ export const apiRegister = (data: {
   password: string;
   lokasi?: string;
   otp?: string;
-}) => request<AuthResult>('/auth/register', { method: 'POST', body: JSON.stringify(data) });
+  code?: string;
+}) =>
+  request<AuthResult>('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ ...data, code: data.code ?? data.otp, otp: data.otp ?? data.code }),
+  });
 
 export const apiMe = () => request<{ user: Record<string, unknown> }>('/auth/me');
 
 // ---------- Rekomendasi Lokasi COD (Haversine + Gemini AI) ----------
-export interface RecommendCodResponse {
-  source: string;
-  userDistanceKm: number | null;
-  spots: Array<{
-    id: string;
-    name: string;
-    lat: number;
-    lng: number;
-    desc: string;
-    distMidKm: number;
-    distAKm: number | null;
-    distBKm: number | null;
-  }>;
-  recommendedSpot: {
-    id: string;
-    name: string;
-    lat: number;
-    lng: number;
-    desc: string;
-    distMidKm: number;
-    distAKm: number | null;
-    distBKm: number | null;
-  };
-  advice: string;
+export interface CodSpotRecommendation {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  desc: string;
+  distMidKm: number;
+  distAKm: number | null;
+  distBKm: number | null;
 }
 
-export const apiRecommendCod = (payload: {
+export interface RecommendCodResponse {
+  source?: string;
+  userDistanceKm?: number | null;
+  midpoint?: { lat: number; lng: number } | null;
+  spots?: CodSpotRecommendation[];
+  recommendations?: CodSpotRecommendation[];
+  recommendedSpot?: CodSpotRecommendation;
+  advice?: string;
+}
+
+export const apiSuggestCod = (payload: {
+  conversationId?: string;
+  itemId?: string;
+  buyerLocation?: { lat: number; lng: number } | null;
+  sellerLocation?: { lat: number; lng: number } | null;
   coordA?: { lat: number; lng: number } | null;
   coordB?: { lat: number; lng: number } | null;
   itemName?: string;
   itemCategory?: string;
 }) =>
   request<RecommendCodResponse>(
-    '/chat/recommend-cod',
+    '/chat/suggest-cod',
     {
       method: 'POST',
       body: JSON.stringify(payload),
     },
     20000
   );
+
+// Alias kompatibilitas bila komponen memanggil apiRecommendCod
+export const apiRecommendCod = apiSuggestCod;
 
 // ---------- Sync ----------
 type Rec = Record<string, unknown> & { id?: unknown };
@@ -203,8 +212,23 @@ function readLocal(): Record<CollectionName, Rec[]> {
   const db = readJSON<Record<string, unknown>>(DB_KEY, {});
   const out = {} as Record<CollectionName, Rec[]>;
   for (const c of SYNC_ORDER) {
-    const src = c === 'orders' ? readJSON<unknown>(ORDERS_KEY, []) : db[c];
-    out[c] = Array.isArray(src) ? (src as Rec[]) : [];
+    if (c === 'orders') {
+      const src = readJSON<unknown>(ORDERS_KEY, []);
+      out[c] = Array.isArray(src) ? (src as Rec[]) : [];
+    } else if (c === 'settings') {
+      const list: Rec[] = Array.isArray(db.settings) ? [...(db.settings as Rec[])] : [];
+      if (db.flash_barter && typeof db.flash_barter === 'object') {
+        const fb = db.flash_barter as Rec;
+        const fbRecord: Rec = { ...fb, id: 'SET-flash_barter' };
+        const idx = list.findIndex((item) => item && String(item.id) === 'SET-flash_barter');
+        if (idx >= 0) list[idx] = fbRecord;
+        else list.push(fbRecord);
+      }
+      out[c] = list;
+    } else {
+      const src = db[c];
+      out[c] = Array.isArray(src) ? (src as Rec[]) : [];
+    }
   }
   return out;
 }
@@ -295,7 +319,26 @@ async function doPull(): Promise<void> {
   const cols = {} as Record<CollectionName, Rec[]>;
   for (const c of SYNC_ORDER) cols[c] = Array.isArray(data[c]) ? (data[c] as Rec[]) : [];
 
-  const { orders, ...dbOnly } = cols;
+  // Sinkronkan konfigurasi Flash Barter baik dari field langsung maupun koleksi settings
+  const settingsFb = cols.settings.find((item) => item && String(item.id) === 'SET-flash_barter');
+  const resolvedFlashBarter =
+    data.flash_barter && typeof data.flash_barter === 'object'
+      ? (data.flash_barter as Rec)
+      : settingsFb ?? null;
+
+  if (resolvedFlashBarter) {
+    const fbWithId: Rec = { ...resolvedFlashBarter, id: 'SET-flash_barter' };
+    const idx = cols.settings.findIndex((item) => item && String(item.id) === 'SET-flash_barter');
+    if (idx >= 0) cols.settings[idx] = fbWithId;
+    else cols.settings.push(fbWithId);
+  }
+
+  const { orders, ...dbCollections } = cols;
+  const dbOnly: Record<string, unknown> = {
+    ...dbCollections,
+    ...(resolvedFlashBarter ? { flash_barter: { ...resolvedFlashBarter, id: 'SET-flash_barter' } } : {}),
+  };
+
   try {
     localStorage.setItem(DB_KEY, JSON.stringify(dbOnly));
     localStorage.setItem(ORDERS_KEY, JSON.stringify(orders));
@@ -364,7 +407,7 @@ function startPolling(): void {
     } catch {
       /* jaringan putus: coba lagi di putaran berikutnya */
     }
-  }, 10000);
+  }, 5000);
 }
 
 export async function bootstrapBackend(): Promise<void> {

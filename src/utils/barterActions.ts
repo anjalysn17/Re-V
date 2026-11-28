@@ -13,6 +13,22 @@ interface CreateOfferResult {
   offerId: string;
 }
 
+function getItemTitle(item: Item, fallback = 'Barang'): string {
+  return item.nama || item.title || item.nama_barang || fallback;
+}
+
+function getItemOwnerId(item: Item): string {
+  return String(item.id_pemilik || item.id_user || item.ownerId || '');
+}
+
+function moveConversationToTop(conversations: Conversation[], conv: Conversation): void {
+  const existingIdx = conversations.findIndex((c) => String(c.id) === String(conv.id));
+  if (existingIdx > 0) {
+    conversations.splice(existingIdx, 1);
+    conversations.unshift(conv);
+  }
+}
+
 /**
  * Membuat tawaran barter resmi, membuat/memperbarui percakapan,
  * mengirim pesan dengan metadata selisih harga otomatis (barterOffer), serta notifikasi.
@@ -23,6 +39,11 @@ export function createOfferAndConversation({
   currentUser,
   codLocation,
 }: CreateOfferParams): CreateOfferResult {
+  const ownerId = getItemOwnerId(targetItem);
+  if (!ownerId || ownerId === String(currentUser.id)) {
+    throw new Error('Tidak dapat mengajukan barter pada barang milik sendiri.');
+  }
+
   const currentDB = getDB();
   if (!Array.isArray(currentDB.offers)) currentDB.offers = [];
   if (!Array.isArray(currentDB.conversations)) currentDB.conversations = [];
@@ -33,8 +54,9 @@ export function createOfferAndConversation({
   const targetPrice = parseSafePrice(targetItem.harga ?? targetItem.price ?? 0);
   // Positif = pengaju barter menambah tunai, Negatif = pemilik barang target menambah tunai
   const signedDiff = targetPrice - offeredPrice;
+  const resolvedCodLocation = codLocation || targetItem.lokasi || 'Gerbang Utama UNNES (Sekaran)';
 
-  // 1. Buat record Offer baru
+  // 1. Buat record Offer baru (terbaru di depan sesuai PAKEM D.4)
   const newOfferId = generateId('OFR');
   const newOffer: Offer = {
     id: newOfferId,
@@ -42,24 +64,22 @@ export function createOfferAndConversation({
     item_diminta: targetItem.id,
     status: 'pending',
     id_pengirim: currentUser.id,
-    id_penerima: targetItem.id_pemilik,
+    id_penerima: ownerId,
     selisih_harga: signedDiff,
-    ...(codLocation ? { lokasi_cod: codLocation } : {}),
+    lokasi_cod: resolvedCodLocation,
   };
   currentDB.offers.unshift(newOffer);
 
   // 2. Cari atau buat Conversation untuk pasangan user ini
   let conv = currentDB.conversations.find(
     (c) =>
-      (String(c.id_user_a) === String(currentUser.id) &&
-        String(c.id_user_b) === String(targetItem.id_pemilik)) ||
-      (String(c.id_user_a) === String(targetItem.id_pemilik) &&
-        String(c.id_user_b) === String(currentUser.id))
+      (String(c.id_user_a) === String(currentUser.id) && String(c.id_user_b) === ownerId) ||
+      (String(c.id_user_a) === ownerId && String(c.id_user_b) === String(currentUser.id))
   );
 
   const nowIso = new Date().toISOString();
-  const offeredName = myItem.nama || myItem.title || myItem.nama_barang || 'Barang Penawaran';
-  const targetName = targetItem.nama || targetItem.title || targetItem.nama_barang || 'Barang Target';
+  const offeredName = getItemTitle(myItem, 'Barang Penawaran');
+  const targetName = getItemTitle(targetItem, 'Barang Target');
 
   const diffSummary =
     signedDiff > 0
@@ -72,15 +92,17 @@ export function createOfferAndConversation({
     'id-ID'
   )}) ⇄ "${targetName}" (Rp ${targetPrice.toLocaleString('id-ID')}). ${diffSummary}.`;
 
+  const participants = [String(currentUser.id), ownerId];
+
   if (!conv) {
     const newConvId = generateId('CONV');
     conv = {
       id: newConvId,
       id_user_a: currentUser.id,
-      id_user_b: targetItem.id_pemilik,
+      id_user_b: ownerId,
       id_item_terkait: targetItem.id,
     };
-    (conv as any).participants = [String(currentUser.id), String(targetItem.id_pemilik)];
+    (conv as any).participants = participants;
     (conv as any).itemId = targetItem.id;
     (conv as any).itemTitle = targetName;
     (conv as any).itemImage = targetItem.foto;
@@ -91,6 +113,9 @@ export function createOfferAndConversation({
     currentDB.conversations.unshift(conv);
   } else {
     conv.id_item_terkait = targetItem.id;
+    if (!Array.isArray((conv as any).participants) || (conv as any).participants.length < 2) {
+      (conv as any).participants = participants;
+    }
     (conv as any).itemId = targetItem.id;
     (conv as any).itemTitle = targetName;
     (conv as any).itemImage = targetItem.foto;
@@ -98,6 +123,7 @@ export function createOfferAndConversation({
     (conv as any).pesan_terakhir = offerMsgText;
     (conv as any).lastMessage = offerMsgText;
     (conv as any).updatedAt = nowIso;
+    moveConversationToTop(currentDB.conversations, conv);
   }
 
   // 3. Tambahkan Message dengan metadata barterOffer agar kartu selisih otomatis tampil di ChatPage
@@ -125,19 +151,21 @@ export function createOfferAndConversation({
       targetItemTitle: targetName,
       targetItemPrice: targetPrice,
       priceDifference: signedDiff,
-      codLocation: codLocation || targetItem.lokasi || 'Gerbang Utama UNNES (Sekaran)',
+      codLocation: resolvedCodLocation,
     },
   };
   currentDB.messages.push(newMsg as Message);
 
-  // 4. Simpan ke cache lokal & sinkronkan ke server terlebih dahulu
+  // 4. Simpan ke cache lokal & sinkronkan ke server
   saveDB(currentDB);
 
-  // 5. Kirim notifikasi terstruktur untuk penerima
+  // 5. Kirim notifikasi terstruktur untuk penerima (sesuai PAKEM A.1 & A.3)
   pushNotification({
-    userId: targetItem.id_pemilik,
+    userId: ownerId,
     tipe: 'barter',
     teks: `Tawaran barter baru dari ${currentUser.nama} untuk ${targetName}`,
+    targetPage: 'chat',
+    targetId: conv.id,
     link_page: 'chat',
     target_id: conv.id,
   });
@@ -162,6 +190,11 @@ export function getOrCreateConversation({
   currentUser,
   initialMessage,
 }: OpenConversationParams): { convId: string } {
+  const ownerId = getItemOwnerId(targetItem);
+  if (!ownerId || ownerId === String(currentUser.id)) {
+    throw new Error('Tidak dapat memulai percakapan pada barang milik sendiri.');
+  }
+
   const currentDB = getDB();
   if (!Array.isArray(currentDB.conversations)) currentDB.conversations = [];
   if (!Array.isArray(currentDB.messages)) currentDB.messages = [];
@@ -169,38 +202,43 @@ export function getOrCreateConversation({
 
   let conv = currentDB.conversations.find(
     (c) =>
-      (String(c.id_user_a) === String(currentUser.id) &&
-        String(c.id_user_b) === String(targetItem.id_pemilik)) ||
-      (String(c.id_user_a) === String(targetItem.id_pemilik) &&
-        String(c.id_user_b) === String(currentUser.id))
+      (String(c.id_user_a) === String(currentUser.id) && String(c.id_user_b) === ownerId) ||
+      (String(c.id_user_a) === ownerId && String(c.id_user_b) === String(currentUser.id))
   );
 
   let updated = false;
   const nowIso = new Date().toISOString();
-  const targetName = targetItem.nama || targetItem.title || targetItem.nama_barang || 'Barang';
+  const targetName = getItemTitle(targetItem, 'Barang');
+  const participants = [String(currentUser.id), ownerId];
 
   if (!conv) {
     const newConvId = generateId('CONV');
     conv = {
       id: newConvId,
       id_user_a: currentUser.id,
-      id_user_b: targetItem.id_pemilik,
+      id_user_b: ownerId,
       id_item_terkait: targetItem.id,
     };
-    (conv as any).participants = [String(currentUser.id), String(targetItem.id_pemilik)];
+    (conv as any).participants = participants;
     (conv as any).itemId = targetItem.id;
     (conv as any).itemTitle = targetName;
     (conv as any).itemImage = targetItem.foto;
     (conv as any).updatedAt = nowIso;
     currentDB.conversations.unshift(conv);
     updated = true;
-  } else if (conv.id_item_terkait !== targetItem.id) {
-    conv.id_item_terkait = targetItem.id;
-    (conv as any).itemId = targetItem.id;
-    (conv as any).itemTitle = targetName;
-    (conv as any).itemImage = targetItem.foto;
-    (conv as any).updatedAt = nowIso;
-    updated = true;
+  } else {
+    if (!Array.isArray((conv as any).participants) || (conv as any).participants.length < 2) {
+      (conv as any).participants = participants;
+      updated = true;
+    }
+    if (conv.id_item_terkait !== targetItem.id) {
+      conv.id_item_terkait = targetItem.id;
+      (conv as any).itemId = targetItem.id;
+      (conv as any).itemTitle = targetName;
+      (conv as any).itemImage = targetItem.foto;
+      (conv as any).updatedAt = nowIso;
+      updated = true;
+    }
   }
 
   if (initialMessage && initialMessage.trim()) {
@@ -225,6 +263,7 @@ export function getOrCreateConversation({
     (conv as any).pesan_terakhir = cleanText;
     (conv as any).lastMessage = cleanText;
     (conv as any).updatedAt = nowIso;
+    moveConversationToTop(currentDB.conversations, conv);
     updated = true;
   }
 
@@ -234,9 +273,11 @@ export function getOrCreateConversation({
 
   if (initialMessage && initialMessage.trim()) {
     pushNotification({
-      userId: targetItem.id_pemilik,
+      userId: ownerId,
       tipe: 'chat',
       teks: `Pesan baru dari ${currentUser.nama} tentang ${targetName}`,
+      targetPage: 'chat',
+      targetId: conv.id,
       link_page: 'chat',
       target_id: conv.id,
     });

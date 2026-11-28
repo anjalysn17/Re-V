@@ -41,13 +41,21 @@ export default function ReturnModal({ onClose, orderId, itemName, sellerId }: Pr
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  useEffect(() => {
+    return () => {
+      selectedMedia.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [selectedMedia]);
+
   const handleSubmit = () => {
     const reasonLabel = reasons.find((r) => r.id === selectedReason)?.label || selectedReason;
     if (sellerId && currentUser) {
       pushNotification({
         userId: sellerId,
-        tipe: 'order',
+        tipe: 'success',
         teks: `${currentUser.nama} mengajukan peninjauan COD (${reasonLabel}) untuk ${itemName || 'pesanan'} di ${selectedMediation}.`,
+        targetPage: 'orders',
+        targetId: orderId,
         link_page: 'orders',
       });
     }
@@ -59,6 +67,7 @@ export default function ReturnModal({ onClose, orderId, itemName, sellerId }: Pr
       <div
         role="dialog"
         aria-modal="true"
+        aria-labelledby="return-modal-success-title"
         className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
         onClick={(e) => e.target === e.currentTarget && onClose()}
       >
@@ -73,6 +82,7 @@ export default function ReturnModal({ onClose, orderId, itemName, sellerId }: Pr
             ✅
           </div>
           <h3
+            id="return-modal-success-title"
             className="text-xl font-black mb-2"
             style={{ fontFamily: 'var(--font-display)', color: 'var(--color-primary)' }}
           >
@@ -104,6 +114,7 @@ export default function ReturnModal({ onClose, orderId, itemName, sellerId }: Pr
     <div
       role="dialog"
       aria-modal="true"
+      aria-labelledby="return-modal-title"
       className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
@@ -116,7 +127,11 @@ export default function ReturnModal({ onClose, orderId, itemName, sellerId }: Pr
           style={{ background: '#c0392b' }}
         >
           <div>
-            <h3 className="text-lg font-black text-white" style={{ fontFamily: 'var(--font-display)' }}>
+            <h3
+              id="return-modal-title"
+              className="text-lg font-black text-white"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
               Ajukan Peninjauan / Mediasi COD
             </h3>
             <p className="text-xs text-white/80 mt-0.5">
@@ -125,8 +140,9 @@ export default function ReturnModal({ onClose, orderId, itemName, sellerId }: Pr
           </div>
           <button
             type="button"
+            aria-label="Tutup modal"
             onClick={onClose}
-            className="text-white/80 hover:text-white text-2xl leading-none p-2 touch-manipulation"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center text-white/80 hover:text-white text-2xl leading-none rounded-xl touch-manipulation"
           >
             &times;
           </button>
@@ -168,8 +184,9 @@ export default function ReturnModal({ onClose, orderId, itemName, sellerId }: Pr
                   <button
                     type="button"
                     key={r.id}
+                    aria-pressed={selectedReason === r.id}
                     onClick={() => setSelectedReason(r.id)}
-                    className="w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all touch-manipulation"
+                    className="min-h-[48px] w-full flex items-start gap-3 p-3 rounded-xl border text-left transition-all touch-manipulation"
                     style={{
                       borderColor: selectedReason === r.id ? '#c0392b' : 'var(--color-border)',
                       background: selectedReason === r.id ? '#c0392b0c' : '#f8f4ee',
@@ -216,13 +233,16 @@ export default function ReturnModal({ onClose, orderId, itemName, sellerId }: Pr
                 className="hidden"
                 onChange={(e) => {
                   const files = Array.from(e.target.files || []);
-                  setSelectedMedia(files.map((f) => URL.createObjectURL(f)));
+                  if (files.length === 0) return;
+                  const newUrls = files.map((f) => URL.createObjectURL(f));
+                  setSelectedMedia((prev) => [...prev, ...newUrls].slice(0, 4));
+                  e.target.value = '';
                 }}
               />
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
-                className="w-full border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all hover:border-current touch-manipulation"
+                className="min-h-[120px] w-full border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all hover:border-current touch-manipulation"
                 style={{
                   borderColor: selectedMedia.length > 0 ? '#c0392b' : 'var(--color-border)',
                   background: '#f8f4ee',
@@ -233,22 +253,26 @@ export default function ReturnModal({ onClose, orderId, itemName, sellerId }: Pr
                   Ketuk untuk unggah foto bukti
                 </p>
                 <p className="text-xs mt-1" style={{ color: 'var(--color-muted)' }}>
-                  Format: JPG, PNG, WebP
+                  Format: JPG, PNG, WebP (maks. 4 foto)
                 </p>
               </button>
               {selectedMedia.length > 0 && (
                 <div className="grid grid-cols-4 gap-2">
                   {selectedMedia.map((src, i) => (
                     <div
-                      key={i}
+                      key={src}
                       className="relative aspect-square rounded-xl overflow-hidden border"
                       style={{ borderColor: 'var(--color-border)' }}
                     >
                       <img src={src} alt={`bukti ${i + 1}`} className="w-full h-full object-cover" />
                       <button
                         type="button"
-                        onClick={() => setSelectedMedia((prev) => prev.filter((_, j) => j !== i))}
-                        className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 text-white text-xs flex items-center justify-center touch-manipulation"
+                        aria-label={`Hapus foto ${i + 1}`}
+                        onClick={() => {
+                          URL.revokeObjectURL(src);
+                          setSelectedMedia((prev) => prev.filter((_, j) => j !== i));
+                        }}
+                        className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/70 text-white text-xs flex items-center justify-center touch-manipulation"
                       >
                         ×
                       </button>
@@ -269,8 +293,9 @@ export default function ReturnModal({ onClose, orderId, itemName, sellerId }: Pr
                   <button
                     type="button"
                     key={pt.name}
+                    aria-pressed={selectedMediation === pt.name}
                     onClick={() => setSelectedMediation(pt.name)}
-                    className="w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all touch-manipulation"
+                    className="min-h-[48px] w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-all touch-manipulation"
                     style={{
                       borderColor: selectedMediation === pt.name ? '#c0392b' : 'var(--color-border)',
                       background: selectedMediation === pt.name ? '#c0392b0c' : '#f8f4ee',

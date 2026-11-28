@@ -64,7 +64,6 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
     }
 
     if (!API_ENABLED) {
-      // Mode offline / lokal
       setOtpSent(true);
       setOtpCooldown(30);
       setInfoMsg('Mode lokal aktif: masukkan 6 digit angka apa saja (misal 123456) sebagai simulasi OTP.');
@@ -126,7 +125,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
       return;
     }
     if (!/^\d{6}$/.test(regOtp.trim())) {
-      setErrorMsg('Klik "Kirim Kode OTP" lalu masukkan 6 digit kode verifikasi dari email kamu.');
+      setErrorMsg('Klik "Kirim OTP" lalu masukkan 6 digit kode verifikasi dari email kamu.');
       return;
     }
 
@@ -175,7 +174,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
       >
         {/* Header Modal */}
         <div
-          className="px-6 py-4 flex items-center justify-between border-b"
+          className="px-6 py-3.5 flex items-center justify-between border-b"
           style={{ borderColor: 'var(--color-border)', background: 'var(--color-primary)' }}
         >
           <div className="flex items-center gap-2">
@@ -191,8 +190,9 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
           </div>
           <button
             type="button"
+            aria-label="Tutup modal"
             onClick={closeAuthModal}
-            className="text-white/80 hover:text-white transition-colors p-2 rounded-lg hover:bg-white/10 touch-manipulation"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center text-white/80 hover:text-white transition-colors rounded-lg hover:bg-white/10 touch-manipulation"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -256,6 +256,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                 </label>
                 <input
                   type="text"
+                  autoComplete="username"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   placeholder="Contoh: budi@gmail.com atau Budi"
@@ -268,6 +269,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                 <label className="block text-xs font-bold text-gray-700 mb-1">Password</label>
                 <input
                   type="password"
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Password akun"
@@ -291,6 +293,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                 <label className="block text-xs font-bold text-gray-700 mb-1">Nama Lengkap</label>
                 <input
                   type="text"
+                  autoComplete="name"
                   value={regNama}
                   onChange={(e) => setRegNama(e.target.value)}
                   placeholder="Contoh: Budi Santoso"
@@ -304,6 +307,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                 <div className="flex gap-2">
                   <input
                     type="email"
+                    autoComplete="email"
                     value={regEmail}
                     onChange={(e) => {
                       setRegEmail(e.target.value);
@@ -317,7 +321,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                     type="button"
                     onClick={handleSendOtp}
                     disabled={isSendingOtp || otpCooldown > 0 || !regEmail.trim()}
-                    className="min-h-[42px] px-3 py-2 rounded-xl text-xs font-bold text-white shrink-0 transition-opacity hover:opacity-90 disabled:opacity-50 touch-manipulation"
+                    className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-bold text-white shrink-0 transition-opacity hover:opacity-90 disabled:opacity-50 touch-manipulation"
                     style={{ background: 'var(--color-accent)' }}
                   >
                     {isSendingOtp
@@ -338,6 +342,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                 <input
                   type="text"
                   inputMode="numeric"
+                  autoComplete="one-time-code"
                   maxLength={6}
                   value={regOtp}
                   onChange={(e) => setRegOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
@@ -365,6 +370,7 @@ export default function AuthModal({ onLoginSuccess }: AuthModalProps) {
                 </label>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   value={regPassword}
                   onChange={(e) => setRegPassword(e.target.value)}
                   placeholder="Minimal 8 karakter"

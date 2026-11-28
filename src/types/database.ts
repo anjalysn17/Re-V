@@ -13,6 +13,20 @@ export type OrderStatus = 'Menunggu COD' | 'Diproses' | 'Selesai' | 'Dibatalkan'
 
 export type OrderType = 'beli' | 'barter';
 
+export type PageName =
+  | 'home'
+  | 'product'
+  | 'barter'
+  | 'chat'
+  | 'admin'
+  | 'my-items'
+  | 'category'
+  | 'search'
+  | 'cart'
+  | 'profile'
+  | 'orders'
+  | 'info';
+
 export interface Coordinates {
   lat: number;
   lng: number;
@@ -29,15 +43,16 @@ export interface User {
   role: UserRole;
   is_verified?: boolean;
   titik_cod?: string;
+  /** Hanya dipakai secara lokal/privat untuk hitung jarak Haversine, tidak diekspos publik */
   koordinat?: Coordinates;
 }
 
 export interface FlashBarterConfig {
-  id: 'SYS-FLASH-BARTER';
+  id: 'ITM-SYS-FLASH-BARTER' | 'SYS-FLASH-BARTER' | string;
   is_system_config: true;
   config_type: 'flash_barter';
   is_active: boolean;
-  end_time: string; // ISO timestamp berakhirnya sesi Flash Barter
+  end_time: string;
   item_ids: string[];
   updated_at?: string;
 }
@@ -49,12 +64,13 @@ export interface Item {
   harga: number;
   kondisi: string;
   foto: string;
+  /** Gunakan 'jual' | 'barter' | 'keduanya'. Untuk status terjual gunakan boolean `terjual` */
   status: ItemTransactionType | 'sold' | 'available';
   id_pemilik: string;
   lokasi: string;
   deskripsi: string;
 
-  // Alias field yang disinkronkan server
+  // Alias field yang disinkronkan server & komponen lama
   title?: string;
   nama_barang?: string;
   id_user?: string;
@@ -62,7 +78,7 @@ export interface Item {
   price?: number;
   transactionType?: ItemTransactionType;
 
-  // Field opsional untuk edit barang, status terjual, & titik COD
+  // Field opsional untuk edit barang, status terjual, & titik preset COD
   titik_cod?: string;
   terjual?: boolean;
   updated_at?: string;
@@ -95,6 +111,7 @@ export interface CodSpotRecommendation {
   distMidKm: number;
   distAKm: number | null;
   distBKm: number | null;
+  distanceLabel?: string;
 }
 
 export interface Conversation {
@@ -102,9 +119,9 @@ export interface Conversation {
   id_user_a: string;
   id_user_b: string;
   id_item_terkait: string;
-  // Koordinat privat (hanya terlihat oleh peserta percakapan) untuk hitung titik tengah COD
   koordinat_a?: Coordinates;
   koordinat_b?: Coordinates;
+  participantLocations?: Record<string, Coordinates & { updatedAt?: string }>;
   lokasi_cod_disepakati?: string;
   dealConfirmed?: boolean;
 }
@@ -118,7 +135,7 @@ export interface BarterOfferMeta {
   targetItemId: string;
   targetItemTitle: string;
   targetItemPrice: number;
-  priceDifference: number; // positif = penawar nambah tunai, negatif = penjual nambah tunai
+  priceDifference: number;
   codLocation?: string;
   note?: string;
 }
@@ -131,7 +148,6 @@ export interface Message {
   waktu: string;
   status_baca: boolean;
   type?: 'text' | 'offer' | 'barter_offer' | 'system' | 'cod_recommendation';
-  // Metadata terstruktur untuk kartu tawaran barter & rekomendasi COD
   barterOffer?: BarterOfferMeta;
   offerMeta?: {
     offerId?: string;
@@ -161,8 +177,10 @@ export interface Notification {
   teks: string;
   waktu: string;
   sudah_dibaca: boolean;
-  link_page?: 'chat' | 'orders' | 'my-items';
+  link_page?: PageName | string;
   target_id?: string;
+  targetPage?: PageName | string;
+  targetId?: string;
 }
 
 export interface CartItem {
@@ -203,4 +221,6 @@ export interface JualBeliDB {
   messages: Message[];
   notifications: Notification[];
   cart: CartItem[];
+  orders?: OrderRecord[];
+  flash_barter?: FlashBarterConfig;
 }

@@ -1,13 +1,14 @@
 import { APP_NAME } from '../constants/brand';
 
 interface FooterProps {
-  onNavigate?: (page: string, params?: any) => void;
+  onNavigate?: (page: any, params?: any) => void;
 }
 
 export default function Footer({ onNavigate }: FooterProps) {
   const openInfoSection = (title: string, category: string) => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    onNavigate?.('info', { sectionTitle: title, sectionCategory: category });
+    const navigate = onNavigate || (window as any).revNavigate;
+    navigate?.('info', { sectionTitle: title, sectionCategory: category });
   };
 
   const customerServiceLinks = [
@@ -38,13 +39,13 @@ export default function Footer({ onNavigate }: FooterProps) {
         {/* Kolom 1: Layanan Pelanggan */}
         <div>
           <h4 className="font-bold text-gray-800 text-[13px] mb-4 tracking-wider">LAYANAN PELANGGAN</h4>
-          <ul className="space-y-2.5">
+          <ul className="space-y-1.5">
             {customerServiceLinks.map((label) => (
               <li key={label}>
                 <button
                   type="button"
                   onClick={() => openInfoSection(label, 'Layanan Pelanggan')}
-                  className="text-left hover:text-[var(--color-primary)] transition-colors py-0.5 touch-manipulation"
+                  className="w-full text-left hover:text-[var(--color-primary)] active:opacity-75 transition-colors py-1.5 touch-manipulation cursor-pointer"
                 >
                   {label}
                 </button>
@@ -58,13 +59,13 @@ export default function Footer({ onNavigate }: FooterProps) {
           <h4 className="font-bold text-gray-800 text-[13px] mb-4 tracking-wider">
             TENTANG {APP_NAME.toUpperCase()}
           </h4>
-          <ul className="space-y-2.5">
+          <ul className="space-y-1.5">
             {aboutLinks.map((label) => (
               <li key={label}>
                 <button
                   type="button"
                   onClick={() => openInfoSection(label, `Tentang ${APP_NAME}`)}
-                  className="text-left hover:text-[var(--color-primary)] transition-colors py-0.5 touch-manipulation"
+                  className="w-full text-left hover:text-[var(--color-primary)] active:opacity-75 transition-colors py-1.5 touch-manipulation cursor-pointer"
                 >
                   {label}
                 </button>
@@ -76,13 +77,13 @@ export default function Footer({ onNavigate }: FooterProps) {
         {/* Kolom 3: Ikuti Kami */}
         <div>
           <h4 className="font-bold text-gray-800 text-[13px] mb-4 tracking-wider">IKUTI KAMI</h4>
-          <ul className="space-y-2.5">
+          <ul className="space-y-1.5">
             {socialLinks.map((label) => (
               <li key={label}>
                 <button
                   type="button"
                   onClick={() => openInfoSection(label, 'Kanal Resmi')}
-                  className="text-left hover:text-[var(--color-primary)] transition-colors py-0.5 touch-manipulation"
+                  className="w-full text-left hover:text-[var(--color-primary)] active:opacity-75 transition-colors py-1.5 touch-manipulation cursor-pointer"
                 >
                   {label}
                 </button>

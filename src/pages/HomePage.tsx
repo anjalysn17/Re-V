@@ -1,17 +1,26 @@
 import { useMemo, useState, useEffect } from 'react';
 import Footer from '../components/Footer';
-import { getDB, CURRENT_USER_KEY } from '../services/db';
+import { useAuth } from '../context/AuthContext';
+import {
+  getDB,
+  getCatalogItems,
+  getFlashBarterConfig,
+  parseSafePrice,
+  resolveGrade,
+  isItemSold,
+} from '../services/db';
+import { estimateLocationDistance, DEFAULT_LOCATION_ID } from '../constants/locations';
 
 interface HomePageProps {
   onNavigate: (page: string, params?: any) => void;
 }
 
 const categoryCards = [
-  { icon: '/elektronik.jpg', label: 'Elektronik', count: '240+ barang', color: '#3a6ea5' },
-  { icon: '/bukk.jpg', label: 'Buku & Alat Tulis', count: '580+ barang', color: '#7a5c3b' },
-  { icon: '/bajuu.jpg', label: 'Fashion', count: '310+ barang', color: '#9b4b6a' },
-  { icon: '/perlengkapan.jpg', label: 'Perlengkapan', count: '190+ barang', color: '#567257' },
-  { icon: '/tas.jpg', label: 'Tas', count: '140+ barang', color: '#8b7355' },
+  { icon: '/elektronik.jpg', label: 'Elektronik', color: '#3a6ea5' },
+  { icon: '/bukk.jpg', label: 'Buku & Alat Tulis', color: '#7a5c3b' },
+  { icon: '/bajuu.jpg', label: 'Fashion', color: '#9b4b6a' },
+  { icon: '/perlengkapan.jpg', label: 'Perlengkapan', color: '#567257' },
+  { icon: '/tas.jpg', label: 'Tas', color: '#8b7355' },
 ];
 
 const DEFAULT_CAMPUS_LOCATIONS = [
@@ -23,121 +32,136 @@ const DEFAULT_CAMPUS_LOCATIONS = [
   'Trangkil',
 ];
 
-function parseSafePrice(raw: unknown): number {
-  if (typeof raw === 'number' && Number.isFinite(raw)) {
-    return Math.max(0, Math.round(raw));
-  }
-  if (typeof raw === 'string') {
-    const trimmed = raw.trim();
-    if (!trimmed) return 0;
-    if (/^\d+\.\d{1,2}$/.test(trimmed)) {
-      return Math.max(0, Math.round(Number(trimmed)));
-    }
-    const digits = trimmed.replace(/\D/g, '');
-    return digits ? Number(digits) : 0;
-  }
-  return 0;
-}
-
-function isItemSold(item: any): boolean {
-  const status = String(item?.status || '').toLowerCase();
-  return (
-    item?.terjual === true ||
-    item?.isSold === true ||
-    status === 'sold' ||
-    status === 'terjual' ||
-    status === 'dibarter'
-  );
-}
-
-function resolveGrade(kondisi?: string): 'A' | 'B' | 'C' {
-  const val = String(kondisi || '').trim();
-  if (!val) return 'A';
-  if (/\bGrade\s*C\b/i.test(val) || val === 'C' || /layak pakai/i.test(val)) return 'C';
-  if (/\bGrade\s*B\b/i.test(val) || val === 'B' || /baik/i.test(val)) return 'B';
-  return 'A';
-}
-
-function getUserDefaultLocation(): string {
-  try {
-    const raw = localStorage.getItem(CURRENT_USER_KEY);
-    if (!raw) return '';
-    const user = JSON.parse(raw);
-    return typeof user?.lokasi === 'string' ? user.lokasi.split(',')[0].trim() : '';
-  } catch {
-    return '';
-  }
-}
-
 export default function HomePage({ onNavigate }: HomePageProps) {
+  const { currentUser } = useAuth();
   const [selectedLocation, setSelectedLocation] = useState<string>('Semua Lokasi');
   const [nowTs, setNowTs] = useState<number>(() => Date.now());
-  const userLocation = useMemo(() => getUserDefaultLocation(), []);
+  const [dbVersion, setDbVersion] = useState<number>(0);
 
+  // Timer hitung mundur Flash Barter (1 detik)
   useEffect(() => {
     const interval = setInterval(() => setNowTs(Date.now()), 1000);
     return () => clearInterval(interval);
   }, []);
 
-  const db = getDB() as any;
-  const flashConfig = db.flashBarterConfig || { active: true, endsAt: Date.now() + 2 * 3600 * 1000 };
-  const remainingSec = Math.max(0, Math.floor((Number(flashConfig.endsAt || 0) - nowTs) / 1000));
-  const showFlashStrip = flashConfig.active !== false && remainingSec > 0;
+  // Dengarkan perubahan database lokal/server secara instan tanpa refresh
+  useEffect(() => {
+    const handleDbUpdate = () => setDbVersion((v) => v + 1);
+    window.addEventListener('rev-db-updated', handleDbUpdate);
+    window.addEventListener('storage', handleDbUpdate);
+    return () => {
+      window.removeEventListener('rev-db-updated', handleDbUpdate);
+      window.removeEventListener('storage', handleDbUpdate);
+    };
+  }, []);
+
+  const userLocationShort = useMemo(() => {
+    if (!currentUser?.lokasi) return '';
+    return currentUser.lokasi.split(',')[0].trim();
+  }, [currentUser?.lokasi]);
+
+  // Hanya baca & parse DB saat ada perubahan data (dbVersion), bukan tiap 1 detik
+  const { catalogItems, flashConfig } = useMemo(() => {
+    const db = getDB();
+    return {
+      catalogItems: getCatalogItems(db),
+      flashConfig: getFlashBarterConfig(db),
+    };
+  }, [dbVersion]);
+
+  const endTimestamp = Date.parse(flashConfig.end_time);
+  const remainingSec = Number.isFinite(endTimestamp)
+    ? Math.max(0, Math.floor((endTimestamp - nowTs) / 1000))
+    : 0;
+  const showFlashStrip = flashConfig.is_active && remainingSec > 0;
 
   const hh = String(Math.floor(remainingSec / 3600)).padStart(2, '0');
   const mm = String(Math.floor((remainingSec % 3600) / 60)).padStart(2, '0');
   const ss = String(remainingSec % 60).padStart(2, '0');
 
-  const allProducts = db.items.map((item: any, idx: number) => {
-    const numericPrice = parseSafePrice(item.harga ?? item.price ?? 0);
-    const rawStatus = String(item.status || '').toLowerCase();
-    const offerType =
-      item.transactionType ||
-      (['jual', 'barter', 'keduanya'].includes(rawStatus) ? rawStatus : 'jual');
-    const fullLocation = (item.lokasi || 'Kampus UNNES').trim();
-    const shortLocation = fullLocation.split(',')[0].trim() || 'Kampus UNNES';
+  // Titik acuan perhitungan prediksi jarak berdasarkan area kampus (tanpa GPS publik)
+  const originLocationForDistance =
+    selectedLocation !== 'Semua Lokasi'
+      ? selectedLocation
+      : currentUser?.lokasi || DEFAULT_LOCATION_ID;
 
-    return {
-      id: item.id,
-      name: item.nama || item.title || item.nama_barang || 'Tanpa Nama',
-      numericPrice,
-      price:
-        numericPrice === 0 && offerType === 'barter'
-          ? 'Khusus Barter'
-          : `Rp ${numericPrice.toLocaleString('id-ID')}`,
-      location: shortLocation,
-      fullLocation,
-      img: item.foto || '/assets/seed-images/placeholder.svg',
-      grade: resolveGrade(item.kondisi),
-      barter: offerType === 'barter' || offerType === 'keduanya',
-      isSold: isItemSold(item),
-      sold: (idx % 8) + 2,
-      kategori: item.kategori || 'Lainnya',
-    };
-  });
+  const allProducts = useMemo(() => {
+    return catalogItems.map((item) => {
+      const numericPrice = parseSafePrice(item.harga ?? item.price ?? 0);
+      const rawStatus = String(item.status || '').toLowerCase();
+      const offerType =
+        item.transactionType ||
+        (['jual', 'barter', 'keduanya'].includes(rawStatus) ? rawStatus : 'jual');
+      const fullLocation = (item.lokasi || 'Kampus UNNES').trim();
+      const shortLocation = fullLocation.split(',')[0].trim() || 'Kampus UNNES';
+
+      const distanceInfo = estimateLocationDistance(
+        originLocationForDistance,
+        fullLocation,
+        null
+      );
+
+      return {
+        id: item.id,
+        name: item.nama || item.title || item.nama_barang || 'Tanpa Nama',
+        numericPrice,
+        price:
+          numericPrice === 0 && offerType === 'barter'
+            ? 'Khusus Barter'
+            : `Rp ${numericPrice.toLocaleString('id-ID')}`,
+        location: shortLocation,
+        fullLocation,
+        distanceLabel: distanceInfo?.label || '',
+        img: item.foto || '/assets/seed-images/placeholder.svg',
+        grade: resolveGrade(item.kondisi),
+        barter: offerType === 'barter' || offerType === 'keduanya',
+        isSold: isItemSold(item),
+        kategori: (item.kategori || 'Lainnya').trim(),
+      };
+    });
+  }, [catalogItems, originLocationForDistance]);
+
+  // Hitung jumlah barang aktual per kategori dari database
+  const categoriesWithRealCount = useMemo(() => {
+    return categoryCards.map((cat) => {
+      const count = allProducts.filter(
+        (p) => !p.isSold && p.kategori.toLowerCase() === cat.label.toLowerCase()
+      ).length;
+      return {
+        ...cat,
+        countLabel: `${count} barang`,
+      };
+    });
+  }, [allProducts]);
 
   const locationOptions = useMemo(() => {
     const set = new Set<string>(DEFAULT_CAMPUS_LOCATIONS);
-    if (userLocation) set.add(userLocation);
-    allProducts.forEach((p: any) => {
+    if (userLocationShort) set.add(userLocationShort);
+    allProducts.forEach((p) => {
       if (p.location && p.location !== 'Kampus UNNES') {
         set.add(p.location);
       }
     });
     return ['Semua Lokasi', ...Array.from(set)];
-  }, [allProducts, userLocation]);
+  }, [allProducts, userLocationShort]);
 
   const filteredProducts = useMemo(() => {
     if (selectedLocation === 'Semua Lokasi') return allProducts;
     const keyword = selectedLocation.toLowerCase();
     return allProducts.filter(
-      (p: any) =>
+      (p) =>
         p.location.toLowerCase().includes(keyword) ||
         p.fullLocation.toLowerCase().includes(keyword)
     );
   }, [allProducts, selectedLocation]);
 
-  const barterProducts = allProducts.filter((p: any) => p.barter && !p.isSold);
+  // Daftar barang Flash Barter murni mengikuti pilihan Admin (item_ids)
+  const flashBarterProducts = useMemo(() => {
+    const itemIds = Array.isArray(flashConfig.item_ids) ? flashConfig.item_ids : [];
+    if (itemIds.length === 0) return [];
+    const selectedSet = new Set(itemIds);
+    return allProducts.filter((p) => !p.isSold && selectedSet.has(p.id));
+  }, [allProducts, flashConfig.item_ids]);
 
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-5 space-y-8">
@@ -165,7 +189,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                 onNavigate('search');
               }
             }}
-            className="min-h-[42px] px-6 py-2.5 rounded-xl font-bold text-sm bg-white hover:bg-gray-100 transition-all shadow-sm touch-manipulation"
+            className="min-h-[44px] px-6 py-2.5 rounded-xl font-bold text-sm bg-white hover:bg-gray-100 active:scale-95 transition-all shadow-sm touch-manipulation"
             style={{ color: 'var(--color-primary)' }}
           >
             Mulai Belanja
@@ -173,25 +197,25 @@ export default function HomePage({ onNavigate }: HomePageProps) {
           <button
             type="button"
             onClick={() => onNavigate('barter')}
-            className="min-h-[42px] px-6 py-2.5 rounded-xl font-bold text-sm border-2 border-white text-white hover:bg-white/10 transition-all touch-manipulation"
+            className="min-h-[44px] px-6 py-2.5 rounded-xl font-bold text-sm border-2 border-white text-white hover:bg-white/10 active:scale-95 transition-all touch-manipulation"
           >
             Barter Sekarang
           </button>
         </div>
       </div>
 
-      {/* Categories */}
+      {/* Categories (Jumlah Dinamis Sesuai Data Asli) */}
       <div>
         <h2 className="text-lg font-black mb-4" style={{ fontFamily: 'var(--font-display)' }}>
           Kategori
         </h2>
         <div className="flex items-center gap-3 overflow-x-auto pb-2">
-          {categoryCards.map((cat) => (
+          {categoriesWithRealCount.map((cat) => (
             <button
               type="button"
               key={cat.label}
               onClick={() => onNavigate('category', cat.label)}
-              className="group w-36 shrink-0 flex flex-col items-center justify-between py-3 px-2 rounded-2xl transition-all duration-200 hover:-translate-y-1 hover:shadow-md border bg-white cursor-pointer touch-manipulation"
+              className="group w-36 shrink-0 flex flex-col items-center justify-between py-3 px-2 rounded-2xl transition-all duration-200 hover:-translate-y-1 active:scale-95 hover:shadow-md border bg-white cursor-pointer touch-manipulation"
               style={{ borderColor: 'var(--color-border)' }}
             >
               <div className="w-20 h-20 rounded-xl flex items-center justify-center overflow-hidden bg-gray-50 group-hover:bg-gray-100/80 transition-colors p-1.5">
@@ -205,63 +229,68 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                 <p className="text-xs font-bold text-gray-800 leading-tight group-hover:text-[var(--color-primary)] transition-colors">
                   {cat.label}
                 </p>
-                <p className="text-[10px] mt-0.5 text-gray-400 font-medium">{cat.count}</p>
+                <p className="text-[10px] mt-0.5 text-gray-500 font-semibold">{cat.countLabel}</p>
               </div>
             </button>
           ))}
         </div>
       </div>
 
-      {/* Flash Barter Strip (Real-time Countdown yang bisa diatur Admin) */}
+      {/* Flash Barter Strip (Sinkron dari Pengaturan Admin di Server) */}
       {showFlashStrip && (
         <div
-          className="rounded-2xl p-4 flex items-center gap-4 overflow-hidden"
+          className="rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-4 overflow-hidden shadow-sm"
           style={{ background: 'linear-gradient(90deg, #c0392b, #e07b39)' }}
         >
-          <div className="shrink-0">
-            <p className="text-white font-black text-sm" style={{ fontFamily: 'var(--font-display)' }}>
-              Flash Barter
-            </p>
-            <p className="text-white/80 text-xs">Berakhir dalam</p>
+          <div className="shrink-0 flex sm:block items-center justify-between">
+            <div>
+              <p className="text-white font-black text-sm" style={{ fontFamily: 'var(--font-display)' }}>
+                ⚡ Flash Barter
+              </p>
+              <p className="text-white/85 text-xs">Berakhir dalam</p>
+            </div>
             <div className="flex gap-1 mt-1 tabular-nums">
               {[hh, mm, ss].map((t, i) => (
                 <span
                   key={i}
-                  className="px-1.5 py-0.5 rounded text-xs font-black text-white"
-                  style={{ background: 'rgba(0,0,0,0.3)' }}
+                  className="px-2 py-0.5 rounded text-xs font-black text-white"
+                  style={{ background: 'rgba(0,0,0,0.35)' }}
                 >
                   {t}
                 </span>
               ))}
             </div>
           </div>
+
           <div className="flex-1 flex gap-3 overflow-x-auto pb-1">
-            {barterProducts.length === 0 ? (
-              <div className="flex items-center px-4 py-2 text-white/80 text-xs italic">
-                Belum ada barang barter yang tersedia saat ini
+            {flashBarterProducts.length === 0 ? (
+              <div className="flex items-center px-3 py-2 text-white/90 text-xs italic">
+                Admin belum memilih barang untuk sesi Flash Barter ini.
               </div>
             ) : (
-              barterProducts.slice(0, 5).map((p: any) => (
+              flashBarterProducts.map((p) => (
                 <button
                   type="button"
                   key={p.id}
                   onClick={() => onNavigate('product', { productId: p.id })}
-                  className="shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl hover:opacity-90 transition-all touch-manipulation"
-                  style={{ background: 'rgba(255,255,255,0.15)' }}
+                  className="shrink-0 min-h-[48px] flex items-center gap-2.5 px-3 py-2 rounded-xl hover:opacity-95 active:scale-95 transition-all touch-manipulation"
+                  style={{ background: 'rgba(255,255,255,0.18)' }}
                 >
                   <img
                     src={p.img}
                     alt={p.name}
-                    className="w-8 h-8 rounded-lg object-cover"
+                    className="w-9 h-9 rounded-lg object-cover bg-white/20"
                     onError={(e) => {
                       (e.target as HTMLImageElement).src = '/assets/seed-images/placeholder.svg';
                     }}
                   />
                   <div className="text-left">
-                    <p className="text-xs font-semibold text-white leading-tight max-w-[110px] truncate">
+                    <p className="text-xs font-bold text-white leading-tight max-w-[125px] truncate">
                       {p.name}
                     </p>
-                    <p className="text-[10px] text-white/90 font-medium whitespace-nowrap">{p.price}</p>
+                    <p className="text-[10px] text-white/90 font-medium whitespace-nowrap">
+                      {p.price} {p.distanceLabel ? `• ${p.distanceLabel}` : ''}
+                    </p>
                   </div>
                 </button>
               ))
@@ -279,7 +308,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
             </h2>
 
             <div
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border bg-white text-xs"
+              className="inline-flex items-center gap-1.5 min-h-[40px] px-3 py-1.5 rounded-xl border bg-white text-xs"
               style={{ borderColor: 'var(--color-border)' }}
             >
               <svg className="w-3.5 h-3.5 text-[var(--color-primary)] shrink-0" viewBox="0 0 20 20" fill="currentColor">
@@ -293,11 +322,11 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                 aria-label="Filter lokasi COD"
                 value={selectedLocation}
                 onChange={(e) => setSelectedLocation(e.target.value)}
-                className="bg-transparent font-semibold text-gray-700 focus:outline-none cursor-pointer pr-1"
+                className="bg-transparent font-semibold text-gray-700 focus:outline-none cursor-pointer pr-1 min-h-[32px]"
               >
                 {locationOptions.map((loc) => (
                   <option key={loc} value={loc}>
-                    {loc === userLocation && loc !== 'Semua Lokasi' ? `${loc} (Lokasimu)` : loc}
+                    {loc === userLocationShort && loc !== 'Semua Lokasi' ? `${loc} (Lokasimu)` : loc}
                   </option>
                 ))}
               </select>
@@ -308,7 +337,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
             <button
               type="button"
               onClick={() => onNavigate('search')}
-              className="text-sm font-medium hover:underline touch-manipulation"
+              className="min-h-[40px] px-2 text-sm font-medium hover:underline touch-manipulation"
               style={{ color: 'var(--color-primary)' }}
             >
               Lihat Semua →
@@ -345,7 +374,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
             <button
               type="button"
               onClick={() => setSelectedLocation('Semua Lokasi')}
-              className="px-4 py-1.5 rounded-xl text-xs font-bold text-white touch-manipulation"
+              className="min-h-[44px] px-4 py-2 rounded-xl text-xs font-bold text-white touch-manipulation"
               style={{ background: 'var(--color-primary)' }}
             >
               Tampilkan Semua Lokasi
@@ -353,12 +382,12 @@ export default function HomePage({ onNavigate }: HomePageProps) {
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {filteredProducts.map((product: any) => (
+            {filteredProducts.map((product) => (
               <button
                 type="button"
                 key={product.id}
                 onClick={() => onNavigate('product', { productId: product.id })}
-                className={`rounded-2xl border overflow-hidden text-left group hover:shadow-lg hover:-translate-y-1 transition-all duration-200 cursor-pointer touch-manipulation ${
+                className={`rounded-2xl border overflow-hidden text-left group hover:shadow-lg hover:-translate-y-1 active:scale-[0.98] transition-all duration-200 cursor-pointer touch-manipulation ${
                   product.isSold ? 'opacity-75' : ''
                 }`}
                 style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
@@ -405,7 +434,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                     {product.price}
                   </p>
                   <div className="flex items-center justify-between gap-1.5 mt-2">
-                    <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#f0ebe2] text-[11px] text-gray-600 max-w-[68%]">
+                    <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#f0ebe2] text-[11px] text-gray-600 max-w-[65%]">
                       <svg className="w-3 h-3 shrink-0 fill-current text-gray-500" viewBox="0 0 20 20">
                         <path
                           fillRule="evenodd"
@@ -415,9 +444,11 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                       </svg>
                       <span className="truncate">{product.location}</span>
                     </div>
-                    <span className="text-[10px] shrink-0" style={{ color: 'var(--color-muted)' }}>
-                      {product.sold} terjual
-                    </span>
+                    {product.distanceLabel && (
+                      <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md shrink-0">
+                        {product.distanceLabel}
+                      </span>
+                    )}
                   </div>
                 </div>
               </button>

@@ -215,12 +215,29 @@ export function getGroupedLocations(): {
 export function findLocation(idOrName?: string | null): CampusLocation | undefined {
   if (!idOrName) return undefined;
   const normalized = idOrName.trim().toLowerCase();
-  return UNNES_LOCATIONS.find(
+  if (!normalized) return undefined;
+
+  // 1. Pencocokan persis (id, name, shortName)
+  const exact = UNNES_LOCATIONS.find(
     (loc) =>
       loc.id.toLowerCase() === normalized ||
       loc.name.toLowerCase() === normalized ||
       loc.shortName.toLowerCase() === normalized
   );
+  if (exact) return exact;
+
+  // 2. Pencocokan kata kunci (misal "Sekaran, Gunungpati" atau "Patemon, Gunungpati")
+  if (normalized === 'kampus unnes') {
+    return UNNES_LOCATIONS.find((loc) => loc.id === DEFAULT_LOCATION_ID);
+  }
+
+  return UNNES_LOCATIONS.find((loc) => {
+    const primaryKeyword = loc.shortName.split('/')[0].trim().toLowerCase();
+    return (
+      (primaryKeyword.length >= 3 && normalized.includes(primaryKeyword)) ||
+      loc.name.toLowerCase().includes(normalized)
+    );
+  });
 }
 
 export function formatLocationLabel(
@@ -246,6 +263,67 @@ export function haversineDistanceKm(
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+/**
+ * Mengubah jarak dalam kilometer menjadi label yang mudah dibaca ("~350 m" atau "~1.4 km").
+ */
+export function formatDistanceLabel(distanceKm: number): string {
+  if (!Number.isFinite(distanceKm) || distanceKm < 0) return '';
+  if (distanceKm < 1) {
+    const meters = Math.max(10, Math.round((distanceKm * 1000) / 10) * 10);
+    return `~${meters} m`;
+  }
+  return `~${distanceKm.toFixed(1)} km`;
+}
+
+/**
+ * Menghitung estimasi jarak antara lokasi pengguna (koordinat GPS privat atau area profil)
+ * dengan titik area barang/COD yang dipublikasikan.
+ */
+export function estimateLocationDistance(
+  originLocation?: string | null,
+  targetLocation?: string | null,
+  originCoords?: { lat: number; lng: number } | null
+): { distanceKm: number; label: string } | null {
+  const targetLoc = findLocation(targetLocation);
+  if (!targetLoc) return null;
+
+  if (
+    originCoords &&
+    typeof originCoords.lat === 'number' &&
+    Number.isFinite(originCoords.lat) &&
+    typeof originCoords.lng === 'number' &&
+    Number.isFinite(originCoords.lng)
+  ) {
+    const km = haversineDistanceKm(originCoords.lat, originCoords.lng, targetLoc.lat, targetLoc.lng);
+    return { distanceKm: km, label: formatDistanceLabel(km) };
+  }
+
+  const originLoc = findLocation(originLocation);
+  if (!originLoc) return null;
+
+  const km = haversineDistanceKm(originLoc.lat, originLoc.lng, targetLoc.lat, targetLoc.lng);
+  return { distanceKm: km, label: formatDistanceLabel(km) };
+}
+
+/**
+ * Mencari area preset kampus terdekat dari koordinat GPS perangkat
+ * agar koordinat presisi pengguna tidak tersimpan ke data publik barang.
+ */
+export function findNearestCampusLocation(lat: number, lng: number): CampusLocation {
+  let nearest = UNNES_LOCATIONS[0];
+  let minDistance = Infinity;
+
+  for (const loc of UNNES_LOCATIONS) {
+    const dist = haversineDistanceKm(lat, lng, loc.lat, loc.lng);
+    if (dist < minDistance) {
+      minDistance = dist;
+      nearest = loc;
+    }
+  }
+
+  return nearest;
 }
 
 export function getOsmEmbedUrl(lat: number, lng: number, delta = 0.004): string {

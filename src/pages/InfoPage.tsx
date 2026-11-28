@@ -4,7 +4,7 @@ import { APP_NAME } from '../constants/brand';
 interface InfoPageProps {
   sectionTitle?: string;
   sectionCategory?: string;
-  onNavigate: (page: string, params?: any) => void;
+  onNavigate: (page: any, params?: any) => void;
 }
 
 const INFO_CONTENT: Record<
@@ -13,7 +13,6 @@ const INFO_CONTENT: Record<
     badge: string;
     subtitle: string;
     highlights: { title: string; body: string }[];
-    steps?: string[];
   }
 > = {
   'Pusat Bantuan': {
@@ -36,7 +35,8 @@ const INFO_CONTENT: Record<
   },
   'Cara Jual & Barter': {
     badge: 'Panduan Pengguna',
-    subtitle: 'Ubah barang kos atau perlengkapan kuliah yang jarang dipakai menjadi uang tunai atau barang lain yang lebih kamu butuhkan.',
+    subtitle:
+      'Ubah barang kos atau perlengkapan kuliah yang jarang dipakai menjadi uang tunai atau barang lain yang lebih kamu butuhkan.',
     highlights: [
       {
         title: '1. Pasang Iklan Barang',
@@ -72,7 +72,8 @@ const INFO_CONTENT: Record<
   },
   [`Garansi Aman ${APP_NAME}`]: {
     badge: 'Keamanan Komunitas',
-    subtitle: 'Langkah perlindungan bersama untuk menjaga lingkungan jual beli dan barter tetap jujur dan nyaman.',
+    subtitle:
+      'Langkah perlindungan bersama untuk menjaga lingkungan jual beli dan barter tetap jujur dan nyaman.',
     highlights: [
       {
         title: 'Verifikasi Identitas Email OTP',
@@ -90,7 +91,8 @@ const INFO_CONTENT: Record<
   },
   'Hubungi Kami': {
     badge: 'Kontak & Dukungan',
-    subtitle: 'Punya masukan fitur, laporan bug, atau laporan penyalahgunaan iklan? Tim pengelola siap membantu.',
+    subtitle:
+      'Punya masukan fitur, laporan bug, atau laporan penyalahgunaan iklan? Tim pengelola siap membantu.',
     highlights: [
       {
         title: 'Email Bantuan Pengguna',
@@ -122,7 +124,8 @@ const INFO_CONTENT: Record<
   },
   'Komunitas Kampus': {
     badge: 'Ekosistem Lokal',
-    subtitle: 'Menghubungkan mahasiswa lintas fakultas dan warga kos di kawasan Sekaran, Banaran, Patemon, Kalisegoro, dan Trangkil.',
+    subtitle:
+      'Menghubungkan mahasiswa lintas fakultas dan warga kos di kawasan Sekaran, Banaran, Patemon, Kalisegoro, dan Trangkil.',
     highlights: [
       {
         title: 'Kategori Kebutuhan Kuliah & Kos',
@@ -165,21 +168,21 @@ const INFO_CONTENT: Record<
 };
 
 export default function InfoPage({
-  sectionTitle = 'Pusat Bantuan',
+  sectionTitle = 'Tentang Kami',
   sectionCategory = 'Informasi',
   onNavigate,
 }: InfoPageProps) {
   const data = INFO_CONTENT[sectionTitle] || {
     badge: sectionCategory,
-    subtitle: `Informasi resmi seputar ${sectionTitle} di ${APP_NAME}. Ikuti pembaruan komunitas kampus dan informasi fitur terbaru kami.`,
+    subtitle: `Halaman "${sectionTitle}" di ${APP_NAME} saat ini masih dalam tahap pengembangan dan penyempurnaan sebelum rilis penuh.`,
     highlights: [
       {
-        title: `Kanal Resmi ${sectionTitle}`,
-        body: `Terhubung dengan komunitas ${APP_NAME} untuk mendapatkan info barang bekas pilihan, tips COD aman sekitar kampus, serta jadwal Flash Barter terbaru.`,
+        title: `Pembaruan Fitur ${sectionTitle}`,
+        body: `Tim pengembang ${APP_NAME} sedang menyiapkan dokumentasi lengkap dan layanan interaktif untuk bagian ${sectionTitle}.`,
       },
       {
-        title: 'Butuh Bantuan Langsung?',
-        body: 'Kamu dapat kembali ke beranda untuk menjelajahi katalog atau membuka halaman Smart Barter untuk mulai menukar barang.',
+        title: 'Layanan Utama Tetap Berjalan Normal',
+        body: 'Kamu tetap dapat menjelajahi katalog barang, mengajukan barter, dan melakukan transaksi COD seperti biasa.',
       },
     ],
   };
@@ -189,7 +192,7 @@ export default function InfoPage({
       <button
         type="button"
         onClick={() => onNavigate('home')}
-        className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 hover:text-gray-900 py-1 touch-manipulation"
+        className="min-h-[44px] inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 hover:text-gray-900 py-1 touch-manipulation"
       >
         <span>←</span> Kembali ke Beranda
       </button>
@@ -198,11 +201,24 @@ export default function InfoPage({
         className="rounded-2xl p-6 sm:p-8 text-white shadow-sm"
         style={{ background: 'linear-gradient(135deg, #3e5540 0%, var(--color-primary) 100%)' }}
       >
-        <span className="inline-block px-3 py-1 rounded-full text-[11px] font-bold bg-white/15 mb-3">
-          {data.badge}
-        </span>
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <span className="inline-block px-3 py-1 rounded-full text-[11px] font-bold bg-white/15">
+            {data.badge}
+          </span>
+          <span className="inline-block px-3 py-1 rounded-full text-[11px] font-bold bg-amber-400/25 text-amber-100 border border-amber-300/30">
+            Dalam Pengembangan
+          </span>
+        </div>
         <h1 className="text-2xl sm:text-3xl font-black tracking-tight">{sectionTitle}</h1>
         <p className="text-xs sm:text-sm text-white/85 mt-2 leading-relaxed">{data.subtitle}</p>
+      </div>
+
+      <div className="rounded-2xl p-4 border border-amber-200 bg-amber-50/80 text-amber-900 text-xs leading-relaxed">
+        <p className="font-bold">Status Halaman: Masih Dalam Pengembangan</p>
+        <p className="mt-1 text-amber-800">
+          Konten dan fitur pada halaman <span className="font-semibold">{sectionTitle}</span> sedang
+          disiapkan secara bertahap. Berikut ringkasan informasi sementara yang dapat kamu gunakan.
+        </p>
       </div>
 
       <div className="space-y-3">
@@ -222,7 +238,7 @@ export default function InfoPage({
         <button
           type="button"
           onClick={() => onNavigate('home')}
-          className="min-h-[42px] px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-90 touch-manipulation"
+          className="min-h-[44px] px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-90 touch-manipulation"
           style={{ background: 'var(--color-primary)' }}
         >
           Jelajahi Barang
@@ -230,7 +246,7 @@ export default function InfoPage({
         <button
           type="button"
           onClick={() => onNavigate('barter')}
-          className="min-h-[42px] px-5 py-2.5 rounded-xl text-xs font-bold border bg-white text-gray-800 hover:bg-gray-50 touch-manipulation"
+          className="min-h-[44px] px-5 py-2.5 rounded-xl text-xs font-bold border bg-white text-gray-800 hover:bg-gray-50 touch-manipulation"
           style={{ borderColor: 'var(--color-border)' }}
         >
           Buka Smart Barter

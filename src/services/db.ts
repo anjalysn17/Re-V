@@ -3,12 +3,15 @@ import {
   Item,
   Notification,
   FlashBarterConfig,
+  PageName,
 } from '../types/database';
 import { API_ENABLED, notifyLocalChange, resetLocalCacheForApi } from './api';
 
 export const DB_STORAGE_KEY = 'jualbeliDB';
 export const CURRENT_USER_KEY = 'currentUser';
-export const FLASH_BARTER_DOC_ID = 'SYS-FLASH-BARTER';
+// Memakai prefix ITM- agar lolos validasi ID koleksi items di server, namun tetap ditandai sebagai dokumen konfigurasi
+export const FLASH_BARTER_DOC_ID = 'ITM-SYS-FLASH-BARTER';
+export const LEGACY_FLASH_BARTER_DOC_ID = 'SYS-FLASH-BARTER';
 
 export const INITIAL_SEED: JualBeliDB = {
   users: [
@@ -253,7 +256,12 @@ export function parseSafePrice(value: unknown): number {
  */
 export function resolveGrade(kondisi?: string): 'A' | 'B' | 'C' {
   const k = (kondisi || '').toLowerCase();
-  if (k.includes('grade a') || k.includes('seperti baru') || k.includes('baru') || k.includes('mulus')) {
+  if (
+    k.includes('grade a') ||
+    k.includes('seperti baru') ||
+    k.includes('baru') ||
+    k.includes('mulus')
+  ) {
     return 'A';
   }
   if (k.includes('grade b') || k.includes('baik') || k.includes('layak pakai')) {
@@ -270,7 +278,45 @@ export function resolveGrade(kondisi?: string): 'A' | 'B' | 'C' {
  */
 export function isItemSold(item?: Partial<Item> | null): boolean {
   if (!item) return true;
-  return item.terjual === true || item.status === 'sold';
+  return item.terjual === true || (item.status as string) === 'sold';
+}
+
+/**
+ * Kalkulasi jarak Haversine dengan satuan otomatis meter (< 1000 m) atau kilometer (>= 1000 m).
+ */
+export function calculateDistanceLabel(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): { meters: number; label: string } {
+  const R = 6371e3;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const meters = Math.max(0, R * c);
+
+  const label =
+    meters < 1000 ? `~${Math.round(meters)} m` : `~${(meters / 1000).toFixed(1)} km`;
+
+  return { meters, label };
+}
+
+export function isFlashBarterConfigDoc(item?: Partial<Item> | null): boolean {
+  if (!item) return false;
+  return (
+    item.id === FLASH_BARTER_DOC_ID ||
+    item.id === LEGACY_FLASH_BARTER_DOC_ID ||
+    item.is_system_config === true ||
+    item.config_type === 'flash_barter'
+  );
 }
 
 /**
@@ -278,9 +324,7 @@ export function isItemSold(item?: Partial<Item> | null): boolean {
  */
 export function getCatalogItems(db: JualBeliDB): Item[] {
   if (!Array.isArray(db.items)) return [];
-  return db.items.filter(
-    (item) => item && item.id !== FLASH_BARTER_DOC_ID && !item.is_system_config
-  );
+  return db.items.filter((item) => item && !isFlashBarterConfigDoc(item));
 }
 
 /**
@@ -289,7 +333,7 @@ export function getCatalogItems(db: JualBeliDB): Item[] {
 export function getFlashBarterConfig(db?: JualBeliDB): FlashBarterConfig {
   const source = db ?? getDB();
   const doc = Array.isArray(source.items)
-    ? source.items.find((i) => i && (i.id === FLASH_BARTER_DOC_ID || i.config_type === 'flash_barter'))
+    ? source.items.find((i) => isFlashBarterConfigDoc(i))
     : undefined;
 
   if (doc) {
@@ -298,7 +342,10 @@ export function getFlashBarterConfig(db?: JualBeliDB): FlashBarterConfig {
       is_system_config: true,
       config_type: 'flash_barter',
       is_active: Boolean(doc.is_active),
-      end_time: typeof doc.end_time === 'string' ? doc.end_time : new Date(Date.now() + 2 * 3600_000).toISOString(),
+      end_time:
+        typeof doc.end_time === 'string'
+          ? doc.end_time
+          : new Date(Date.now() + 2 * 3600_000).toISOString(),
       item_ids: Array.isArray(doc.item_ids) ? doc.item_ids.map(String) : [],
       updated_at: doc.updated_at,
     };
@@ -317,16 +364,27 @@ export function getFlashBarterConfig(db?: JualBeliDB): FlashBarterConfig {
 /**
  * Menyimpan konfigurasi Flash Barter oleh Admin dan memicu sinkronisasi.
  */
-export function saveFlashBarterConfig(config: {
-  is_active: boolean;
-  end_time: string;
-  item_ids: string[];
-}): FlashBarterConfig {
+export function saveFlashBarterConfig(
+  config: {
+    is_active: boolean;
+    end_time: string;
+    item_ids: string[];
+  },
+  adminUserId = 'USR-000'
+): FlashBarterConfig {
   const db = getDB();
   if (!Array.isArray(db.items)) db.items = [];
 
-  const nextConfig: FlashBarterConfig = {
+  const nextConfig: FlashBarterConfig & Partial<Item> = {
     id: FLASH_BARTER_DOC_ID,
+    id_pemilik: adminUserId,
+    nama: 'SYS_FLASH_BARTER',
+    kategori: 'Perlengkapan',
+    harga: 0,
+    status: 'barter',
+    kondisi: 'Grade A (Seperti Baru)',
+    deskripsi: 'Konfigurasi Sistem Flash Barter',
+    foto: '',
     is_system_config: true,
     config_type: 'flash_barter',
     is_active: Boolean(config.is_active),
@@ -334,6 +392,9 @@ export function saveFlashBarterConfig(config: {
     item_ids: [...new Set(config.item_ids.map(String))],
     updated_at: new Date().toISOString(),
   };
+
+  // Bersihkan dokumen lama jika masih pakai ID legacy SYS-FLASH-BARTER
+  db.items = db.items.filter((i) => i && i.id !== LEGACY_FLASH_BARTER_DOC_ID);
 
   const idx = db.items.findIndex((i) => i && i.id === FLASH_BARTER_DOC_ID);
   if (idx >= 0) {
@@ -346,34 +407,55 @@ export function saveFlashBarterConfig(config: {
   return nextConfig;
 }
 
+export interface PushNotificationInput {
+  userId: string;
+  tipe?: 'barter' | 'chat' | 'success' | 'order';
+  teks?: string;
+  pesan?: string;
+  title?: string;
+  targetPage?: PageName | string;
+  targetId?: string;
+  link_page?: PageName | string;
+  target_id?: string;
+}
+
 /**
  * Helper terpusat untuk mengirim notifikasi nyata (chat, barter, pembaruan pesanan)
  * dan langsung memperbarui UI/sinkronisasi.
  */
-export function pushNotification(params: {
-  userId: string;
-  tipe: 'barter' | 'chat' | 'success' | 'order';
-  teks: string;
-  link_page?: 'chat' | 'orders' | 'my-items';
-  target_id?: string;
-}): Notification | null {
-  if (!params.userId || !params.teks.trim()) return null;
+export function pushNotification(params: PushNotificationInput): Notification | null {
+  const rawText =
+    params.teks ||
+    (params.title && params.pesan
+      ? `${params.title}: ${params.pesan}`
+      : params.pesan || params.title) ||
+    '';
+
+  if (!params.userId || !rawText.trim()) return null;
+
   const db = getDB();
   if (!Array.isArray(db.notifications)) db.notifications = [];
+
+  const normalizedTipe: Notification['tipe'] =
+    params.tipe === 'order' ? 'success' : params.tipe || 'chat';
+
+  const resolvedPage = (params.targetPage || params.link_page) as PageName | undefined;
+  const resolvedTargetId = params.targetId || params.target_id;
 
   const notif: Notification = {
     id: generateId('NTF'),
     id_user: String(params.userId),
-    tipe: params.tipe,
-    teks: params.teks.trim().slice(0, 450),
+    tipe: normalizedTipe,
+    teks: rawText.trim().slice(0, 450),
     waktu: new Date().toISOString(),
     sudah_dibaca: false,
-    ...(params.link_page ? { link_page: params.link_page } : {}),
-    ...(params.target_id ? { target_id: params.target_id } : {}),
+    ...(resolvedPage ? { targetPage: resolvedPage, link_page: resolvedPage } : {}),
+    ...(resolvedTargetId
+      ? { targetId: String(resolvedTargetId), target_id: String(resolvedTargetId) }
+      : {}),
   };
 
   db.notifications.unshift(notif);
-  // Batasi maksimal 100 notifikasi terbaru di cache agar localStorage tetap ringan
   if (db.notifications.length > 100) {
     db.notifications = db.notifications.slice(0, 100);
   }
