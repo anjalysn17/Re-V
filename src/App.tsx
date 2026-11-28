@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import ProfilePage from './pages/ProfilePage';
 import OrdersPage from './pages/OrdersPage';
 import Header from './components/Header';
@@ -15,11 +15,13 @@ import InfoPage from './pages/InfoPage';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { getDB } from './services/db';
 import { API_ENABLED } from './services/api';
+import { PageName } from './types/database';
 import AuthModal from './components/AuthModal';
 import AddItemModal from './components/AddItemModal';
 import ResetDemoButton from './components/ResetDemoButton';
 
 export interface NavigationParams {
+  id?: string;
   category?: string;
   productId?: string;
   conversationId?: string;
@@ -29,35 +31,26 @@ export interface NavigationParams {
 }
 
 export type NavigateFunction = (
-  p: string,
+  p: PageName | string,
   params?: string | NavigationParams,
   extraParam?: string
 ) => void;
-
-type Page =
-  | 'home'
-  | 'product'
-  | 'barter'
-  | 'chat'
-  | 'admin'
-  | 'my-items'
-  | 'category'
-  | 'search'
-  | 'cart'
-  | 'profile'
-  | 'orders'
-  | 'info';
 
 function BottomNavigation({
   activePage,
   onNavigate,
   onOpenAddItem,
 }: {
-  activePage: string;
+  activePage: PageName;
   onNavigate: NavigateFunction;
   onOpenAddItem: () => void;
 }) {
-  const navItems = [
+  const navItems: Array<{
+    id: PageName | 'add';
+    label: string;
+    isAction?: boolean;
+    icon: React.ReactNode;
+  }> = [
     {
       id: 'home',
       label: 'Beranda',
@@ -127,7 +120,10 @@ function BottomNavigation({
   ];
 
   return (
-    <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex items-end justify-between px-3 pb-3 pt-2 z-50 shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
+    <nav
+      aria-label="Navigasi Bawah"
+      className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex items-end justify-between px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 z-30 shadow-[0_-4px_10px_rgba(0,0,0,0.05)]"
+    >
       {navItems.map((item) => {
         const isActive = activePage === item.id;
         if (item.isAction) {
@@ -153,7 +149,7 @@ function BottomNavigation({
             type="button"
             key={item.id}
             onClick={() => onNavigate(item.id)}
-            className={`flex flex-col items-center justify-center w-14 transition-colors touch-manipulation ${
+            className={`min-h-[44px] flex flex-col items-center justify-center w-14 transition-colors touch-manipulation ${
               isActive ? 'text-[#567257]' : 'text-gray-400 hover:text-gray-600'
             }`}
           >
@@ -164,54 +160,59 @@ function BottomNavigation({
           </button>
         );
       })}
-    </div>
+    </nav>
   );
 }
 
 function MainLayout() {
   const { currentUser, openAuthModal } = useAuth();
-  const [page, setPage] = useState<Page>('home');
+  const [page, setPage] = useState<PageName>('home');
   const [selectedCategory, setSelectedCategory] = useState<string>('Elektronik');
   const [selectedConversationId, setSelectedConversationId] = useState<string | undefined>(undefined);
   const [selectedProductId, setSelectedProductId] = useState<string | undefined>(undefined);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [infoParams, setInfoParams] = useState<{ title?: string; category?: string }>({});
   const [isAddItemOpen, setIsAddItemOpen] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [, setRefreshKey] = useState(0);
 
   const handleCartUpdated = () => {
     setRefreshKey((prev) => prev + 1);
   };
 
   const navigate: NavigateFunction = (p, params, extraParam) => {
+    const targetPage = p as PageName;
     if (typeof params === 'object' && params !== null) {
       if (params.category) setSelectedCategory(params.category);
-      if (params.productId) setSelectedProductId(params.productId);
+      if (params.productId || params.id) setSelectedProductId(params.productId || params.id);
       if (params.conversationId) setSelectedConversationId(params.conversationId);
       if (params.searchQuery !== undefined) setSearchQuery(params.searchQuery);
-      if (params.sectionTitle || params.sectionCategory) {
+      if (params.sectionTitle !== undefined || params.sectionCategory !== undefined) {
         setInfoParams({ title: params.sectionTitle, category: params.sectionCategory });
       }
     } else if (typeof params === 'string') {
-      if (p === 'category') setSelectedCategory(params);
-      if (p === 'product') setSelectedProductId(params);
-      if (p === 'chat') setSelectedConversationId(params);
-      if (p === 'search') setSearchQuery(params);
-      if (p === 'info') setInfoParams({ title: params });
+      if (targetPage === 'category') setSelectedCategory(params);
+      if (targetPage === 'product') setSelectedProductId(params);
+      if (targetPage === 'chat') setSelectedConversationId(params);
+      if (targetPage === 'search') setSearchQuery(params);
+      if (targetPage === 'info') setInfoParams({ title: params });
     }
-    if (extraParam && p === 'chat') {
+    if (extraParam && targetPage === 'chat') {
       setSelectedConversationId(extraParam);
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    setPage(p as Page);
+    setPage(targetPage);
   };
 
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+
   useEffect(() => {
-    (window as any).revNavigate = navigate;
+    (window as unknown as { revNavigate: NavigateFunction }).revNavigate = (...args) =>
+      navigateRef.current(...args);
   }, []);
 
   useEffect(() => {
-    const onDbUpdated = () => {
+    const onDataUpdated = () => {
       const el = document.activeElement;
       const typing =
         el instanceof HTMLInputElement ||
@@ -219,8 +220,12 @@ function MainLayout() {
         el instanceof HTMLSelectElement;
       if (!typing) setRefreshKey((prev) => prev + 1);
     };
-    window.addEventListener('rev-db-updated', onDbUpdated);
-    return () => window.removeEventListener('rev-db-updated', onDbUpdated);
+    window.addEventListener('rev-db-updated', onDataUpdated);
+    window.addEventListener('rev-orders-updated', onDataUpdated);
+    return () => {
+      window.removeEventListener('rev-db-updated', onDataUpdated);
+      window.removeEventListener('rev-orders-updated', onDataUpdated);
+    };
   }, []);
 
   const cartCount = currentUser
@@ -248,24 +253,23 @@ function MainLayout() {
       />
 
       <main className="flex-1 pb-24 md:pb-10">
-        {page === 'home' && <HomePage key={refreshKey} onNavigate={navigate} />}
+        {page === 'home' && <HomePage onNavigate={navigate} />}
         {page === 'category' && (
           <CategoryPage
-            key={`${refreshKey}-${selectedCategory}`}
+            key={selectedCategory}
             category={selectedCategory}
             onNavigate={navigate}
           />
         )}
         {page === 'search' && (
           <SearchResultsPage
-            key={`${refreshKey}-${searchQuery}`}
+            key={searchQuery}
             query={searchQuery}
             onNavigate={navigate}
           />
         )}
         {page === 'cart' && (
           <CartPage
-            key={refreshKey}
             onNavigate={navigate}
             onCartUpdated={handleCartUpdated}
           />
@@ -297,7 +301,6 @@ function MainLayout() {
         {page === 'admin' && <AdminDashboard onNavigate={navigate} />}
         {page === 'my-items' && (
           <MyItemsPage
-            key={refreshKey}
             onNavigate={navigate}
             onOpenAddItem={handleOpenAddItem}
           />

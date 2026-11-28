@@ -18,9 +18,28 @@ interface ChatPageProps {
 const QUICK_REPLIES = [
   'Halo, barang ini masih tersedia?',
   'Bisa barter dengan barang di profilku?',
-  'Bisa COD di Gerbang Utama UNNES Sekaran?',
+  'Bisa COD di area kampus hari ini?',
   'Boleh minta foto detail kondisinya?',
 ];
+
+function formatDistance(km: number): string {
+  if (!Number.isFinite(km) || km < 0) return '~0 m';
+  if (km < 1) {
+    return `~${Math.round(km * 1000)} m`;
+  }
+  return `~${km.toFixed(1)} km`;
+}
+
+function parseSafePrice(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.round(value);
+  }
+  if (typeof value === 'string') {
+    const digitsOnly = value.replace(/[^\d]/g, '');
+    return digitsOnly ? parseInt(digitsOnly, 10) : 0;
+  }
+  return 0;
+}
 
 export default function ChatPage({ openConversationId, onNavigate }: ChatPageProps) {
   const { currentUser, openAuthModal } = useAuth() as any;
@@ -107,7 +126,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
       (String(conv.sellerId ?? conv.seller_id) === uid
         ? conv.buyerName || conv.senderName
         : conv.sellerName || conv.receiverName) ||
-      'Mahasiswa UNNES';
+      'Pengguna Re:V';
 
     return {
       id: partnerId,
@@ -155,7 +174,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
 
   if (!currentUser) {
     return (
-      <div className="max-w-md mx-auto px-4 py-16 text-center">
+      <div className="max-w-md mx-auto px-4 py-16 pb-28 text-center">
         <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
           <h2 className="text-lg font-bold text-gray-900 mb-2">Pesan & Negosiasi</h2>
           <p className="text-xs text-gray-500 mb-6">
@@ -164,7 +183,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
           <button
             type="button"
             onClick={() => openAuthModal('login')}
-            className="w-full py-3 rounded-xl text-xs font-bold text-white touch-manipulation"
+            className="w-full min-h-[44px] py-3 rounded-xl text-xs font-bold text-white touch-manipulation"
             style={{ background: 'var(--color-primary, #567257)' }}
           >
             Masuk Akun
@@ -174,7 +193,11 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
     );
   }
 
-  const handleSendMessage = (customText?: string, extraMeta?: Record<string, any>) => {
+  const handleSendMessage = (
+    customText?: string,
+    extraMeta?: Record<string, any>,
+    convOverrides?: Record<string, any>
+  ) => {
     const content = (customText ?? messageText).trim();
     if (!content || !activeConversation) return;
 
@@ -202,6 +225,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
       const existingMsgs = Array.isArray(conv.messages) ? conv.messages : [];
       return {
         ...conv,
+        ...(convOverrides || {}),
         messages: [...existingMsgs, newMsg],
         pesan_terakhir: content,
         lastMessage: content,
@@ -221,19 +245,27 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
 
     const partner = resolvePartner(activeConversation);
     if (partner.id) {
+      const isBarterMsg = Boolean(extraMeta?.barterOffer || extraMeta?.offerMeta);
+      const isDealMsg = Boolean(convOverrides?.dealConfirmed);
+      const notifTipe = isDealMsg ? 'success' : isBarterMsg ? 'barter' : 'chat';
+      const targetPage = isDealMsg ? 'orders' : 'chat';
+      const targetId = isDealMsg ? undefined : String(activeConversation.id);
+
       dbService.pushNotification({
         userId: partner.id,
-        tipe: 'chat',
+        tipe: notifTipe,
         teks: `${currentUser.nama || currentUser.name || 'Pengguna'}: ${content}`,
-        link_page: 'chat',
-        target_id: String(activeConversation.id),
+        targetPage,
+        targetId,
+        link_page: targetPage,
+        target_id: targetId,
       });
     }
 
     if (!customText) setMessageText('');
   };
 
-  // Hitung rekomendasi titik COD via Geolocation Browser -> API (/api/chat/recommend-cod) atau fallback Haversine lokal
+  // Hitung rekomendasi titik COD via Geolocation Browser -> API (/api/chat/suggest-cod) atau fallback Haversine lokal
   const handleRecommendCodSpot = () => {
     if (!activeConversation || isRecommendingCod) return;
     setCodError('');
@@ -247,6 +279,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         try {
+          const nowIso = new Date().toISOString();
           const myCoord = {
             lat: Number(pos.coords.latitude.toFixed(6)),
             lng: Number(pos.coords.longitude.toFixed(6)),
@@ -258,17 +291,34 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
           );
           if (!conv) return;
 
+          const partner = resolvePartner(conv);
+          const existingParticipantLocs = conv.participantLocations || {};
+          const updatedParticipantLocs = {
+            ...existingParticipantLocs,
+            [uid]: { ...myCoord, updatedAt: nowIso },
+          };
+
           const userAId = String(conv.id_user_a ?? conv.buyerId ?? conv.participants?.[0] ?? uid);
           const isUserA = userAId === uid;
 
-          const coordA = isUserA ? myCoord : conv.koordinat_a;
-          const coordB = !isUserA ? myCoord : conv.koordinat_b;
+          const partnerStoredLoc = partner.id ? existingParticipantLocs[partner.id] : null;
+          const coordA = isUserA
+            ? myCoord
+            : partnerStoredLoc
+            ? { lat: partnerStoredLoc.lat, lng: partnerStoredLoc.lng }
+            : conv.koordinat_a;
+          const coordB = !isUserA
+            ? myCoord
+            : partnerStoredLoc
+            ? { lat: partnerStoredLoc.lat, lng: partnerStoredLoc.lng }
+            : conv.koordinat_b;
 
-          // Simpan koordinat secara privat hanya pada percakapan ini (tidak bocor ke publik)
+          // Simpan koordinat secara privat hanya pada percakapan ini (tidak pernah diekspos ke publik)
           const updatedConvsWithCoord = (latestDB.conversations || []).map((c: any) =>
             String(c.id) === String(conv.id)
               ? {
                   ...c,
+                  participantLocations: updatedParticipantLocs,
                   ...(isUserA ? { koordinat_a: myCoord } : { koordinat_b: myCoord }),
                 }
               : c
@@ -286,21 +336,43 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
           if (API_ENABLED && apiBase) {
             try {
               const token = getToken();
-              const res = await fetch(`${apiBase}/api/chat/recommend-cod`, {
+              const res = await fetch(`${apiBase}/api/chat/suggest-cod`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                   ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 },
                 body: JSON.stringify({
-                  coordA,
-                  coordB,
+                  conversationId: conv.id,
+                  itemId: relatedItem?.id || conv.itemId,
+                  buyerLocation: coordA,
+                  sellerLocation: coordB,
                   itemName,
                   itemCategory,
                 }),
               });
               if (res.ok) {
-                recPayload = await res.json();
+                const data = await res.json();
+                if (data.recommendedSpot) {
+                  recPayload = data;
+                } else if (Array.isArray(data.recommendations) && data.recommendations.length > 0) {
+                  const normalizedSpots = data.recommendations.map((r: any, i: number) => ({
+                    id: r.id || `spot-${i}`,
+                    name: r.name || r.nama,
+                    lat: Number(r.lat),
+                    lng: Number(r.lng),
+                    desc: r.desc || r.description || r.alasan || 'Titik temu rekomendasi kampus',
+                    distMidKm: Number(r.distMidKm ?? r.distanceKm ?? 0),
+                  }));
+                  recPayload = {
+                    source: data.source || 'gemini-api',
+                    spots: normalizedSpots,
+                    recommendedSpot: normalizedSpots[0],
+                    advice:
+                      data.advice ||
+                      `Rekomendasi titik temu COD terbaik adalah ${normalizedSpots[0].name} (${formatDistance(normalizedSpots[0].distMidKm)} dari titik tengah).`,
+                  };
+                }
               }
             } catch {
               /* fallback ke kalkulasi Haversine lokal */
@@ -314,7 +386,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
             const midLat = (ptA.lat + ptB.lat) / 2;
             const midLng = (ptA.lng + ptB.lng) / 2;
             const userDistanceKm = hasBoth
-              ? Number(haversineDistanceKm(ptA.lat, ptA.lng, ptB.lat, ptB.lng).toFixed(2))
+              ? haversineDistanceKm(ptA.lat, ptA.lng, ptB.lat, ptB.lng)
               : null;
 
             const candidatePool = POPULAR_COD_SPOTS.length ? POPULAR_COD_SPOTS : UNNES_LOCATIONS;
@@ -325,12 +397,12 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                 lat: spot.lat,
                 lng: spot.lng,
                 desc: spot.description,
-                distMidKm: Number(haversineDistanceKm(midLat, midLng, spot.lat, spot.lng).toFixed(2)),
+                distMidKm: haversineDistanceKm(midLat, midLng, spot.lat, spot.lng),
                 distAKm: coordA
-                  ? Number(haversineDistanceKm(coordA.lat, coordA.lng, spot.lat, spot.lng).toFixed(2))
+                  ? haversineDistanceKm(coordA.lat, coordA.lng, spot.lat, spot.lng)
                   : null,
                 distBKm: coordB
-                  ? Number(haversineDistanceKm(coordB.lat, coordB.lng, spot.lat, spot.lng).toFixed(2))
+                  ? haversineDistanceKm(coordB.lat, coordB.lng, spot.lat, spot.lng)
                   : null,
               }))
               .sort((a, b) => a.distMidKm - b.distMidKm)
@@ -342,15 +414,16 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
               userDistanceKm,
               spots: rankedSpots,
               recommendedSpot: topSpot,
-              advice: hasBoth
-                ? `Jarak kalian sekitar ${userDistanceKm} km. Titik tengah paling adil dan aman untuk COD adalah ${topSpot.name} (${topSpot.desc}).`
-                : `Lokasi kamu sudah dibagikan. Rekomendasi titik COD terdekat dari posisimu adalah ${topSpot.name} (${topSpot.desc}).`,
+              advice:
+                hasBoth && userDistanceKm !== null
+                  ? `Jarak kalian sekitar ${formatDistance(userDistanceKm)}. Titik tengah paling adil dan aman untuk COD adalah ${topSpot.name} (${topSpot.desc}).`
+                  : `Lokasi kamu sudah dibagikan. Rekomendasi titik COD terdekat dari posisimu adalah ${topSpot.name} (${topSpot.desc}).`,
             };
           }
 
           const top = recPayload.recommendedSpot;
           handleSendMessage(
-            `📍 Rekomendasi Titik COD: ${top.name} (±${top.distMidKm} km dari titik tengah). ${recPayload.advice}`,
+            `📍 Rekomendasi Titik COD: ${top.name} (${formatDistance(top.distMidKm)} dari titik tengah). ${recPayload.advice}`,
             {
               type: 'cod_recommendation',
               codMeta: recPayload,
@@ -377,22 +450,18 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
     spotCoords?: { lat: number; lng: number }
   ) => {
     if (!activeConversation) return;
-    const latestDB = dbService.getDB() as any;
-    const updatedConvs = (latestDB.conversations || []).map((c: any) =>
-      String(c.id) === String(activeConversation.id)
-        ? {
-            ...c,
-            lokasi_cod_disepakati: spotName,
-            codLocation: spotName,
-            ...(spotCoords ? { codCoordinates: spotCoords } : {}),
-          }
-        : c
+    handleSendMessage(
+      `📌 Saya setuju titik temu COD di: ${spotName}`,
+      undefined,
+      {
+        lokasi_cod_disepakati: spotName,
+        codLocation: spotName,
+        ...(spotCoords ? { codCoordinates: spotCoords } : {}),
+      }
     );
-    persistDB({ ...latestDB, conversations: updatedConvs });
-    handleSendMessage(`📌 Saya setuju titik temu COD di: ${spotName}`);
   };
 
-  // Menyepakati transaksi dari obrolan & mencatatnya ke riwayat OrdersPage
+  // Menyepakati transaksi dari obrolan & mencatatnya ke riwayat OrdersPage secara atomik
   const handleConfirmDealFromChat = () => {
     if (!activeConversation) return;
     const latestDB = dbService.getDB() as any;
@@ -404,7 +473,6 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
     const partner = resolvePartner(freshConv);
     const relatedItem = resolveConversationItem(freshConv);
 
-    // Cari tawaran barter terakhir di obrolan jika ada
     const msgs = getConversationMessages(freshConv);
     const lastBarterMsg = [...msgs].reverse().find((m: any) => m.barterOffer || m.offerMeta);
     const barterData = lastBarterMsg?.barterOffer || lastBarterMsg?.offerMeta;
@@ -432,19 +500,35 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
       freshConv.itemTitle ||
       'Barang Kesepakatan Chat';
 
-    const itemOwnerId = String(
-      relatedItem?.id_pemilik ?? relatedItem?.ownerId ?? freshConv.sellerId ?? partner.id
-    );
-    const isCurrentUserSeller = itemOwnerId === uid;
+    const explicitSellerId =
+      relatedItem?.id_pemilik ??
+      relatedItem?.ownerId ??
+      relatedItem?.id_user ??
+      freshConv.sellerId ??
+      freshConv.seller_id;
 
-    const buyerId = isCurrentUserSeller ? partner.id : uid;
-    const buyerName = isCurrentUserSeller
-      ? partner.name
-      : currentUser.nama || currentUser.name || 'Pembeli';
-    const sellerId = isCurrentUserSeller ? uid : partner.id;
-    const sellerName = isCurrentUserSeller
-      ? currentUser.nama || currentUser.name || 'Penjual'
-      : partner.name;
+    let buyerId = uid;
+    let sellerId = partner.id;
+
+    if (explicitSellerId) {
+      const sellerStr = String(explicitSellerId);
+      if (sellerStr === uid) {
+        sellerId = uid;
+        buyerId = partner.id;
+      } else {
+        sellerId = sellerStr;
+        buyerId = uid;
+      }
+    } else if (freshConv.buyerId || freshConv.buyer_id) {
+      const buyerStr = String(freshConv.buyerId ?? freshConv.buyer_id);
+      buyerId = buyerStr;
+      sellerId = buyerStr === uid ? partner.id : uid;
+    }
+
+    const buyerName =
+      buyerId === uid ? currentUser.nama || currentUser.name || 'Pembeli' : partner.name;
+    const sellerName =
+      sellerId === uid ? currentUser.nama || currentUser.name || 'Penjual' : partner.name;
 
     const agreedCod =
       freshConv.lokasi_cod_disepakati ||
@@ -462,7 +546,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
       itemTitle,
       itemImage: relatedItem?.foto || relatedItem?.image || freshConv.itemImage,
       type: isBarter ? 'barter' : 'beli',
-      price: Number(
+      price: parseSafePrice(
         barterData?.targetItemPrice ??
           relatedItem?.harga ??
           relatedItem?.price ??
@@ -475,18 +559,14 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
         freshConv.offeredItemTitle ||
         'Barang Sesuai Kesepakatan Chat',
       codLocation: agreedCod,
+      lokasi_cod: agreedCod,
       ...(freshConv.codCoordinates ? { codCoordinates: freshConv.codCoordinates } : {}),
     });
 
-    const updatedConversations = (latestDB.conversations || []).map((conv: any) =>
-      String(conv.id) === String(freshConv.id)
-        ? { ...conv, dealConfirmed: true }
-        : conv
-    );
-    persistDB({ ...latestDB, conversations: updatedConversations });
-
     handleSendMessage(
-      `✅ Transaksi disepakati! Pesanan "${itemTitle}" (COD: ${agreedCod}) sudah tercatat di menu Transaksi.`
+      `✅ Transaksi disepakati! Pesanan "${itemTitle}" (COD: ${agreedCod}) sudah tercatat di menu Transaksi.`,
+      undefined,
+      { dealConfirmed: true, lokasi_cod_disepakati: agreedCod }
     );
   };
 
@@ -504,8 +584,8 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
   });
 
   return (
-    <div className="max-w-5xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden grid grid-cols-1 md:grid-cols-12 min-h-[72vh]">
+    <div className="max-w-5xl mx-auto px-3 sm:px-4 pt-3 sm:pt-6 pb-24 md:pb-6">
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden grid grid-cols-1 md:grid-cols-12 min-h-[calc(100dvh-150px)] md:min-h-[72vh]">
         {/* KOLOM KIRI: Daftar Percakapan */}
         <div
           className={`md:col-span-4 border-r border-gray-100 flex flex-col ${
@@ -519,7 +599,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Cari nama atau barang..."
-              className="w-full px-3 py-2 text-xs rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:border-emerald-600"
+              className="w-full min-h-[40px] px-3 py-2 text-xs rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:border-emerald-600"
             />
           </div>
 
@@ -533,7 +613,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                 <button
                   type="button"
                   onClick={() => go('home')}
-                  className="px-4 py-2 rounded-xl text-xs font-bold text-white touch-manipulation"
+                  className="min-h-[42px] px-4 py-2 rounded-xl text-xs font-bold text-white touch-manipulation"
                   style={{ background: 'var(--color-primary, #567257)' }}
                 >
                   Jelajahi Barang
@@ -556,7 +636,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                     type="button"
                     key={conv.id}
                     onClick={() => setSelectedConvId(String(conv.id))}
-                    className={`w-full p-3.5 text-left flex items-start gap-3 transition-colors hover:bg-gray-50 touch-manipulation ${
+                    className={`w-full min-h-[64px] p-3.5 text-left flex items-start gap-3 transition-colors hover:bg-gray-50 active:bg-gray-100 touch-manipulation ${
                       isSelected ? 'bg-emerald-50/60' : ''
                     }`}
                   >
@@ -571,7 +651,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                       <div className="flex items-center justify-between gap-1">
                         <p className="text-xs font-bold text-gray-900 truncate">{partner.name}</p>
                         {conv.dealConfirmed && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-semibold">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-semibold shrink-0">
                             Deal ✓
                           </span>
                         )}
@@ -611,12 +691,13 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                 const relatedItem = resolveConversationItem(activeConversation);
                 return (
                   <div className="bg-white border-b border-gray-100">
-                    <div className="px-4 py-3 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="px-3 sm:px-4 py-3 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
                         <button
                           type="button"
                           onClick={() => setSelectedConvId(null)}
-                          className="md:hidden px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 text-gray-700 touch-manipulation"
+                          aria-label="Kembali ke daftar obrolan"
+                          className="md:hidden min-h-[40px] min-w-[40px] px-2.5 py-1.5 rounded-xl text-xs font-bold bg-gray-100 text-gray-700 active:bg-gray-200 touch-manipulation"
                         >
                           ←
                         </button>
@@ -630,8 +711,8 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                           <div className="flex items-center gap-1.5">
                             <p className="text-sm font-bold text-gray-900 truncate">{partner.name}</p>
                             {partner.isVerified && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold">
-                                UNNES
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold shrink-0">
+                                ✓ Terverifikasi
                               </span>
                             )}
                           </div>
@@ -649,7 +730,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                           onClick={handleRecommendCodSpot}
                           disabled={isRecommendingCod}
                           title="Bagikan lokasi GPS & cari titik tengah COD cerdas"
-                          className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 disabled:opacity-50 touch-manipulation"
+                          className="min-h-[38px] px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 active:bg-blue-200 disabled:opacity-50 touch-manipulation"
                         >
                           {isRecommendingCod ? 'Mencari...' : '📍 Titik COD'}
                         </button>
@@ -658,7 +739,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                           <button
                             type="button"
                             onClick={handleConfirmDealFromChat}
-                            className="px-3 py-1.5 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-90 touch-manipulation"
+                            className="min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-bold text-white shadow-sm hover:opacity-90 active:opacity-80 touch-manipulation"
                             style={{ background: 'var(--color-primary, #567257)' }}
                           >
                             Sepakati Deal
@@ -667,7 +748,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                           <button
                             type="button"
                             onClick={() => go('orders')}
-                            className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 touch-manipulation"
+                            className="min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 touch-manipulation"
                           >
                             Transaksi ✓
                           </button>
@@ -676,12 +757,12 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                     </div>
 
                     {codError && (
-                      <div className="px-4 py-1.5 bg-red-50 border-t border-red-100 text-[11px] text-red-600 flex items-center justify-between">
+                      <div className="px-4 py-2 bg-red-50 border-t border-red-100 text-[11px] text-red-600 flex items-center justify-between">
                         <span>{codError}</span>
                         <button
                           type="button"
                           onClick={() => setCodError('')}
-                          className="font-bold ml-2 touch-manipulation"
+                          className="min-h-[32px] min-w-[32px] font-bold ml-2 touch-manipulation"
                         >
                           ✕
                         </button>
@@ -709,8 +790,8 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                                 activeConversation.itemTitle}
                             </p>
                             <p className="text-[11px] text-gray-500">
-                              {Number(relatedItem?.harga || relatedItem?.price || 0) > 0
-                                ? `Rp ${Number(relatedItem?.harga || relatedItem?.price).toLocaleString('id-ID')}`
+                              {parseSafePrice(relatedItem?.harga || relatedItem?.price) > 0
+                                ? `Rp ${parseSafePrice(relatedItem?.harga || relatedItem?.price).toLocaleString('id-ID')}`
                                 : 'Mode Pertukaran / Barter'}
                             </p>
                           </div>
@@ -719,7 +800,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                           <button
                             type="button"
                             onClick={() => go('product', { productId: relatedItem.id })}
-                            className="text-[11px] font-semibold text-emerald-700 hover:underline shrink-0 touch-manipulation"
+                            className="min-h-[36px] px-2.5 text-[11px] font-semibold text-emerald-700 hover:underline shrink-0 touch-manipulation"
                           >
                             Lihat Barang
                           </button>
@@ -731,7 +812,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
               })()}
 
               {/* Daftar Gelembung Pesan */}
-              <div className="flex-1 p-4 overflow-y-auto space-y-3 max-h-[50vh] md:max-h-[54vh]">
+              <div className="flex-1 p-3.5 sm:p-4 overflow-y-auto space-y-3 max-h-[48dvh] md:max-h-[54vh]">
                 {activeMessages.length === 0 ? (
                   <p className="text-center text-xs text-gray-400 py-8">
                     Belum ada pesan. Kirim sapaan atau pilih template pesan di bawah untuk memulai.
@@ -763,7 +844,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                       >
                         {/* Kartu Pengajuan Barter & Selisih Harga Otomatis */}
                         {barterOffer && (
-                          <div className="max-w-[88%] sm:max-w-[78%] mb-1.5 rounded-2xl bg-amber-50 border border-amber-200 p-3.5 text-xs space-y-2 shadow-xs">
+                          <div className="max-w-[90%] sm:max-w-[78%] mb-1.5 rounded-2xl bg-amber-50 border border-amber-200 p-3.5 text-xs space-y-2 shadow-xs">
                             <div className="flex items-center justify-between gap-2 border-b border-amber-200/70 pb-1.5">
                               <span className="font-bold text-amber-900">⇄ Penawaran Barter</span>
                               <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-200/70 text-amber-900 font-bold">
@@ -778,7 +859,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                                   {barterOffer.offeredItemTitle || barterOffer.offeredItemName}
                                 </span>
                                 <span className="text-amber-800 font-semibold block">
-                                  Rp {Number(barterOffer.offeredItemPrice || 0).toLocaleString('id-ID')}
+                                  Rp {parseSafePrice(barterOffer.offeredItemPrice).toLocaleString('id-ID')}
                                 </span>
                               </div>
                               <div className="bg-white/80 p-2 rounded-xl border border-amber-100">
@@ -787,19 +868,23 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                                   {barterOffer.targetItemTitle || barterOffer.targetItemName}
                                 </span>
                                 <span className="text-emerald-800 font-semibold block">
-                                  Rp {Number(barterOffer.targetItemPrice || 0).toLocaleString('id-ID')}
+                                  Rp {parseSafePrice(barterOffer.targetItemPrice).toLocaleString('id-ID')}
                                 </span>
                               </div>
                             </div>
 
                             {(() => {
-                              const diff = Number(
-                                barterOffer.priceDifference ?? barterOffer.priceDiff ?? 0
-                              );
+                              const targetPrice = parseSafePrice(barterOffer.targetItemPrice);
+                              const offeredPrice = parseSafePrice(barterOffer.offeredItemPrice);
+                              const diff =
+                                barterOffer.priceDifference !== undefined ||
+                                barterOffer.priceDiff !== undefined
+                                  ? Number(barterOffer.priceDifference ?? barterOffer.priceDiff)
+                                  : targetPrice - offeredPrice;
                               return (
-                                <div className="p-2 rounded-xl bg-white border border-amber-200 flex items-center justify-between font-bold text-[11px]">
+                                <div className="p-2 rounded-xl bg-white border border-amber-200 flex items-center justify-between gap-2 font-bold text-[11px]">
                                   <span className="text-gray-700">Selisih Harga:</span>
-                                  <span className="text-amber-900">
+                                  <span className="text-amber-900 text-right">
                                     {diff > 0
                                       ? `Penawar nambah Rp ${diff.toLocaleString('id-ID')}`
                                       : diff < 0
@@ -814,7 +899,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
 
                         {/* Kartu Rekomendasi Titik COD (Haversine + Gemini + OSM) */}
                         {codMeta && codMeta.recommendedSpot && (
-                          <div className="max-w-[92%] sm:max-w-[82%] mb-1.5 rounded-2xl bg-white border border-blue-200 p-3.5 text-xs space-y-2.5 shadow-xs">
+                          <div className="max-w-[94%] sm:max-w-[82%] mb-1.5 rounded-2xl bg-white border border-blue-200 p-3.5 text-xs space-y-2.5 shadow-xs">
                             <div className="flex items-center justify-between gap-2 border-b border-blue-100 pb-1.5">
                               <span className="font-bold text-blue-900">
                                 📍 Rekomendasi Titik COD
@@ -850,14 +935,14 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                                         lng: sp.lng,
                                       })
                                     }
-                                    className="w-full text-left p-2 rounded-xl border border-gray-200 hover:border-emerald-500 hover:bg-emerald-50/50 transition-colors flex items-center justify-between gap-2 touch-manipulation"
+                                    className="w-full min-h-[44px] text-left p-2.5 rounded-xl border border-gray-200 hover:border-emerald-500 hover:bg-emerald-50/50 active:bg-emerald-100/60 transition-colors flex items-center justify-between gap-2 touch-manipulation"
                                   >
                                     <div className="min-w-0">
                                       <p className="font-bold text-gray-900 truncate">{sp.name}</p>
                                       <p className="text-[10px] text-gray-500 truncate">{sp.desc}</p>
                                     </div>
                                     <span className="text-[10px] font-bold text-emerald-700 shrink-0">
-                                      {sp.distMidKm} km →
+                                      {formatDistance(Number(sp.distMidKm ?? 0))} →
                                     </span>
                                   </button>
                                 ))}
@@ -867,7 +952,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                         )}
 
                         <div
-                          className={`max-w-[80%] px-3.5 py-2.5 rounded-2xl text-xs leading-relaxed ${
+                          className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl text-xs leading-relaxed ${
                             isMine
                               ? 'text-white rounded-br-sm'
                               : 'bg-white text-gray-800 border border-gray-200 rounded-bl-sm'
@@ -893,7 +978,7 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                     key={i}
                     type="button"
                     onClick={() => handleSendMessage(qr)}
-                    className="px-2.5 py-1 rounded-full text-[11px] bg-gray-100 text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 whitespace-nowrap shrink-0 transition-colors touch-manipulation"
+                    className="min-h-[34px] px-3 py-1 rounded-full text-[11px] bg-gray-100 text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 active:bg-emerald-100 whitespace-nowrap shrink-0 transition-colors touch-manipulation"
                   >
                     {qr}
                   </button>
@@ -913,12 +998,12 @@ export default function ChatPage({ openConversationId, onNavigate }: ChatPagePro
                   value={messageText}
                   onChange={(e) => setMessageText(e.target.value)}
                   placeholder="Tulis pesan negosiasi atau titik COD..."
-                  className="flex-1 px-3.5 py-2.5 text-xs rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:border-emerald-600"
+                  className="flex-1 min-h-[42px] px-3.5 py-2.5 text-xs rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:border-emerald-600"
                 />
                 <button
                   type="submit"
                   disabled={!messageText.trim()}
-                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-white disabled:opacity-40 transition-opacity shrink-0 touch-manipulation"
+                  className="min-h-[42px] px-4 py-2.5 rounded-xl text-xs font-bold text-white disabled:opacity-40 transition-opacity shrink-0 touch-manipulation"
                   style={{ background: 'var(--color-primary, #567257)' }}
                 >
                   Kirim

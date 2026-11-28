@@ -48,6 +48,19 @@ function formatRibuan(val: string | number | undefined): string {
   return num.toLocaleString('id-ID');
 }
 
+function normalizeConditionOption(rawCondition?: string): string {
+  const trimmed = (rawCondition || '').trim();
+  if (!trimmed) return CONDITIONS[1];
+  if (CONDITIONS.includes(trimmed)) return trimmed;
+
+  const lower = trimmed.toLowerCase();
+  if (lower === 'baru' || lower.includes('new')) return CONDITIONS[0];
+  if (lower.includes('grade a') || lower.includes('seperti baru')) return CONDITIONS[1];
+  if (lower.includes('grade b') || lower.includes('layak pakai')) return CONDITIONS[2];
+  if (lower.includes('grade c') || lower.includes('cacat')) return CONDITIONS[3];
+  return trimmed;
+}
+
 function compressImage(file: File, maxWidth = 800, quality = 0.78): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!file.type.startsWith('image/')) {
@@ -172,7 +185,7 @@ export default function AddItemModal({
       setNama(initialName);
       setKategori(CATEGORIES.includes(editItem.kategori) ? editItem.kategori : CATEGORIES[0]);
       setHargaDisplay(formatRibuan(initialPrice));
-      setKondisi(editItem.kondisi || CONDITIONS[1]);
+      setKondisi(normalizeConditionOption(editItem.kondisi));
       setFoto(initialFoto);
       setStatus(validOffer);
       setDeskripsi(editItem.deskripsi || '');
@@ -214,7 +227,7 @@ export default function AddItemModal({
         setCustomLocation(defaultLoc);
       }
     }
-  }, [isOpen, editItem, currentUser]);
+  }, [isOpen, editItem, currentUser, defaultLocObj.name]);
 
   if (!isOpen) return null;
 
@@ -302,8 +315,9 @@ export default function AddItemModal({
       }
 
       const existing = db.items[idx] as Item & Record<string, unknown>;
-      const preservedStatus =
-        (existing.status as string) === 'sold' ? ('sold' as Item['status']) : status;
+      const isAlreadySold = Boolean(
+        existing.terjual || (existing.status as string) === 'sold'
+      );
 
       const { koordinat: _dropCoords, ...restExisting } = existing;
 
@@ -321,8 +335,9 @@ export default function AddItemModal({
         price: numericHarga,
         kondisi,
         foto: cleanFoto,
-        status: preservedStatus,
+        status,
         transactionType: status,
+        terjual: isAlreadySold,
         lokasi: resolvedLocation,
         deskripsi: cleanDeskripsi,
       };
@@ -353,6 +368,7 @@ export default function AddItemModal({
       foto: cleanFoto,
       status,
       transactionType: status,
+      terjual: false,
       id_pemilik: currentUser.id,
       id_user: currentUser.id,
       ownerId: currentUser.id,
@@ -376,11 +392,11 @@ export default function AddItemModal({
       role="dialog"
       aria-modal="true"
       aria-label={isEditMode ? 'Edit Barang' : 'Tambah Barang Baru'}
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-xs overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-xs"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
-        className="w-full max-w-lg rounded-t-2xl sm:rounded-2xl border shadow-2xl overflow-hidden my-0 sm:my-6"
+        className="w-full max-w-lg rounded-t-2xl sm:rounded-2xl border shadow-2xl overflow-hidden flex flex-col max-h-[90dvh] sm:max-h-[88dvh]"
         style={{
           background: 'var(--color-card, #fffdf8)',
           borderColor: 'var(--color-border, #d4c8b5)',
@@ -388,7 +404,7 @@ export default function AddItemModal({
         }}
       >
         <div
-          className="px-5 sm:px-6 py-4 flex items-center justify-between border-b"
+          className="px-5 sm:px-6 py-4 flex items-center justify-between border-b shrink-0"
           style={{ borderColor: 'var(--color-border)', background: 'var(--color-primary)' }}
         >
           <div className="flex items-center gap-2">
@@ -405,7 +421,8 @@ export default function AddItemModal({
           <button
             type="button"
             onClick={onClose}
-            className="text-white/80 hover:text-white transition-colors p-2 rounded-lg hover:bg-white/10 touch-manipulation"
+            aria-label="Tutup modal"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center text-white/80 hover:text-white transition-colors rounded-lg hover:bg-white/10 touch-manipulation cursor-pointer"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -415,7 +432,7 @@ export default function AddItemModal({
 
         {showToast && (
           <div
-            className="m-4 p-3 rounded-xl text-xs font-bold text-white text-center shadow"
+            className="mx-4 mt-4 p-3 rounded-xl text-xs font-bold text-white text-center shadow shrink-0"
             style={{ background: 'var(--color-success, #4a8c5c)' }}
           >
             {isEditMode
@@ -424,7 +441,10 @@ export default function AddItemModal({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-4 max-h-[82dvh] overflow-y-auto overscroll-contain pb-24 sm:pb-6">
+        <form
+          onSubmit={handleSubmit}
+          className="p-5 sm:p-6 space-y-4 flex-1 overflow-y-auto overscroll-contain pb-24 sm:pb-6"
+        >
           {errorMsg && (
             <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
               {errorMsg}
@@ -440,7 +460,7 @@ export default function AddItemModal({
               value={nama}
               onChange={(e) => setNama(e.target.value)}
               placeholder="Contoh: Laptop Lenovo ThinkPad E14 Gen 3"
-              className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
+              className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
               style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
               required
             />
@@ -452,7 +472,7 @@ export default function AddItemModal({
               <select
                 value={kategori}
                 onChange={(e) => setKategori(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] cursor-pointer"
+                className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] cursor-pointer touch-manipulation"
                 style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
               >
                 {CATEGORIES.map((cat) => (
@@ -468,7 +488,7 @@ export default function AddItemModal({
               <select
                 value={kondisi}
                 onChange={(e) => setKondisi(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] cursor-pointer"
+                className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] cursor-pointer touch-manipulation"
                 style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
               >
                 {hasCustomCondition && <option value={kondisi}>{kondisi}</option>}
@@ -493,7 +513,7 @@ export default function AddItemModal({
                 value={hargaDisplay}
                 onChange={handleHargaChange}
                 placeholder="350.000"
-                className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border text-sm font-semibold outline-none transition-all focus:border-[var(--color-primary)]"
+                className="w-full min-h-[44px] pl-10 pr-3.5 py-2.5 rounded-xl border text-sm font-semibold outline-none transition-all focus:border-[var(--color-primary)]"
                 style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
                 required
               />
@@ -510,7 +530,7 @@ export default function AddItemModal({
             <select
               value={selectedPresetLocation}
               onChange={(e) => setSelectedPresetLocation(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] cursor-pointer"
+              className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)] cursor-pointer touch-manipulation"
               style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
             >
               {groupedLocations.map((group) => (
@@ -531,7 +551,7 @@ export default function AddItemModal({
                 value={customLocation}
                 onChange={(e) => setCustomLocation(e.target.value)}
                 placeholder="Contoh: Sekaran Raya / Patemon Gunungpati"
-                className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
+                className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border text-sm outline-none transition-all focus:border-[var(--color-primary)]"
                 style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
               />
             )}
@@ -552,7 +572,7 @@ export default function AddItemModal({
                   type="button"
                   key={opt.id}
                   onClick={() => setStatus(opt.id as 'jual' | 'barter' | 'keduanya')}
-                  className={`min-h-[42px] py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer touch-manipulation ${
+                  className={`min-h-[44px] py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer touch-manipulation ${
                     status === opt.id
                       ? 'border-[var(--color-primary)] bg-[#567257]/15 text-[var(--color-primary)]'
                       : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
@@ -580,7 +600,7 @@ export default function AddItemModal({
                   type="button"
                   key={tab.id}
                   onClick={() => setPhotoSource(tab.id as 'upload' | 'preset' | 'url')}
-                  className={`min-h-[38px] py-1.5 px-2 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer touch-manipulation ${
+                  className={`min-h-[42px] py-1.5 px-2 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer touch-manipulation ${
                     photoSource === tab.id
                       ? 'border-[var(--color-primary)] bg-[#567257]/15 text-[var(--color-primary)]'
                       : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
@@ -642,7 +662,7 @@ export default function AddItemModal({
                       setFoto(p.url);
                       setUploadedFileName('');
                     }}
-                    className={`px-3 py-2 rounded-lg border text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer touch-manipulation ${
+                    className={`min-h-[40px] px-3 py-2 rounded-lg border text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer touch-manipulation ${
                       foto === p.url
                         ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/15 text-[var(--color-accent)] font-bold'
                         : 'border-[var(--color-border)] bg-[#f8f4ee] text-gray-600 hover:bg-black/5'
@@ -663,7 +683,7 @@ export default function AddItemModal({
                   setUploadedFileName('');
                 }}
                 placeholder="URL gambar (contoh: https://... atau /assets/...)"
-                className="w-full px-3.5 py-2.5 rounded-xl border text-xs outline-none transition-all focus:border-[var(--color-primary)]"
+                className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border text-xs outline-none transition-all focus:border-[var(--color-primary)]"
                 style={{ borderColor: 'var(--color-border)', background: '#f8f4ee', color: 'var(--color-text)' }}
               />
             )}
@@ -711,7 +731,7 @@ export default function AddItemModal({
                       setUploadedFileName('');
                       if (fileInputRef.current) fileInputRef.current.value = '';
                     }}
-                    className="text-xs text-red-500 hover:text-red-700 font-bold px-2 py-1.5 rounded-lg hover:bg-red-50 transition-colors shrink-0 cursor-pointer touch-manipulation"
+                    className="min-h-[38px] text-xs text-red-500 hover:text-red-700 font-bold px-2.5 py-1.5 rounded-lg hover:bg-red-50 transition-colors shrink-0 cursor-pointer touch-manipulation"
                   >
                     Reset
                   </button>

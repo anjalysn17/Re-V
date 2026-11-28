@@ -1,9 +1,15 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { API_ENABLED } from '../services/api';
 
 export default function ResetDemoButton() {
   const { resetDemoData } = useAuth();
   const [showToast, setShowToast] = useState(false);
+
+  // Kontrak PAKEM B.7: Sembunyikan tombol Reset Data Demo saat mode API aktif
+  if (API_ENABLED) {
+    return null;
+  }
 
   const handleReset = () => {
     resetDemoData();
@@ -15,19 +21,20 @@ export default function ResetDemoButton() {
   };
 
   return (
-    <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2">
+    <div className="fixed bottom-20 md:bottom-4 right-4 z-40 flex flex-col items-end gap-2">
       {showToast && (
         <div
-          className="px-3 py-1.5 rounded-lg text-xs font-bold text-white shadow-lg animate-in fade-in slide-in-from-bottom-2"
+          className="px-3 py-1.5 rounded-lg text-xs font-bold text-white shadow-lg transition-all duration-200"
           style={{ background: 'var(--color-success, #4a8c5c)' }}
         >
           ✓ Data demo direset ke awal!
         </div>
       )}
       <button
+        type="button"
         onClick={handleReset}
         title="Hapus data localStorage dan isi ulang seed data awal"
-        className="px-3 py-1.5 rounded-full border shadow-sm text-xs font-semibold transition-all hover:shadow hover:opacity-90 active:scale-95 flex items-center gap-1.5"
+        className="px-3 py-2 min-h-[40px] rounded-full border shadow-sm text-xs font-semibold transition-all hover:shadow hover:opacity-90 active:scale-95 flex items-center gap-1.5 touch-manipulation"
         style={{
           background: 'var(--color-card, #fffdf8)',
           borderColor: 'var(--color-border, #d4c8b5)',

@@ -1,8 +1,19 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
-import * as dbService from '../services/db';
+import {
+  getDB,
+  saveDB,
+  parseSafePrice,
+  isItemSold,
+  pushNotification,
+} from '../services/db';
 import { addOrderTransaction } from './OrdersPage';
 import OsmMapEmbed from '../components/OsmMapEmbed';
+import {
+  UNNES_LOCATIONS,
+  DEFAULT_LOCATION_ID,
+  estimateLocationDistance,
+} from '../constants/locations';
 
 interface CartPageProps {
   onNavigate: (page: string, params?: any) => void;
@@ -18,29 +29,12 @@ interface ResolvedCartItem {
   image: string;
   category: string;
   lokasi: string;
-  koordinat?: { lat: number; lng: number };
+  distanceLabel: string | null;
   isSold: boolean;
   sellerId?: string;
   sellerName: string;
   type: 'beli' | 'barter';
   barterOfferTitle?: string;
-}
-
-const DEFAULT_COD_SPOTS = [
-  'Gerbang Utama UNNES Sekaran',
-  'Lobi Dekanat FMIPA UNNES',
-  'Perpustakaan Pusat UNNES',
-  'Alfamart / Indomaret Sekaran Raya',
-  'Area Kos Patemon (Sesuai Kesepakatan Chat)',
-];
-
-function parseSafePrice(raw: unknown): number {
-  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0;
-  if (typeof raw === 'string') {
-    const digitsOnly = raw.replace(/[^\d]/g, '');
-    return digitsOnly ? Number(digitsOnly) : 0;
-  }
-  return 0;
 }
 
 function getConfiguredWebLocation(currentUser: any): string {
@@ -52,27 +46,43 @@ function getConfiguredWebLocation(currentUser: any): string {
   } catch {
     // Abaikan jika localStorage tidak tersedia
   }
-  return currentUser?.lokasi?.trim() || '';
+  return currentUser?.lokasi?.trim() || DEFAULT_LOCATION_ID;
+}
+
+function getSessionUserCoords(): { lat: number; lng: number } | null {
+  try {
+    const raw = sessionStorage.getItem('rev_session_coords');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.lat === 'number' && typeof parsed?.lng === 'number') {
+      return { lat: parsed.lat, lng: parsed.lng };
+    }
+  } catch {
+    // Abaikan jika sessionStorage tidak tersedia
+  }
+  return null;
 }
 
 function persistCartChanges(updatedCartArray: any[]) {
-  const db = dbService.getDB() as any;
-  const updatedDB = { ...db, cart: updatedCartArray };
-
-  if (typeof dbService.saveDB === 'function') {
-    dbService.saveDB(updatedDB);
-    return;
-  }
-
-  localStorage.setItem('jualbeliDB', JSON.stringify(updatedDB));
+  const db = getDB() as any;
+  saveDB({ ...db, cart: updatedCartArray });
 }
 
 export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
   const { currentUser, openAuthModal } = useAuth() as any;
+  const defaultLocationObj =
+    UNNES_LOCATIONS.find((l) => l.id === DEFAULT_LOCATION_ID) || UNNES_LOCATIONS[0];
+
   const [cartItems, setCartItems] = useState<ResolvedCartItem[]>([]);
-  const [selectedCodSpot, setSelectedCodSpot] = useState<string>(DEFAULT_COD_SPOTS[0]);
+  const [selectedCodSpot, setSelectedCodSpot] = useState<string>(
+    defaultLocationObj?.name || 'Gerbang Utama UNNES (Sekaran)'
+  );
   const [buyerNote, setBuyerNote] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [feedback, setFeedback] = useState<{
+    type: 'error' | 'success';
+    message: string;
+  } | null>(null);
 
   const loadCart = () => {
     if (!currentUser) {
@@ -80,10 +90,13 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
       return;
     }
 
-    const db = dbService.getDB() as any;
+    const db = getDB() as any;
     const rawCart: any[] = db.cart || [];
     const allItems: any[] = db.items || [];
     const allUsers: any[] = db.users || [];
+
+    const userOriginLocation = getConfiguredWebLocation(currentUser);
+    const sessionCoords = getSessionUserCoords();
 
     const userEntries = rawCart.filter(
       (c) => String(c.id_user ?? c.userId) === String(currentUser.id)
@@ -101,12 +114,14 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
         product.lokasi ||
         product.location ||
         sellerObj?.lokasi ||
-        'Area Kampus UNNES Sekaran';
+        defaultLocationObj?.name ||
+        'Gerbang Utama UNNES (Sekaran)';
 
-      const isSold =
-        product.status === 'sold' ||
-        product.terjual === true ||
-        product.isSold === true;
+      const distInfo = estimateLocationDistance(
+        userOriginLocation,
+        itemLocation,
+        sessionCoords
+      );
 
       return {
         cartId: String(entry.id ?? `${targetItemId}-${idx}`),
@@ -115,14 +130,14 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
           product.nama ||
           product.title ||
           product.nama_barang ||
-          'Barang Bekas Mahasiswa',
+          'Barang Mahasiswa',
         price: parseSafePrice(product.harga ?? product.price ?? 0),
         quantity: Math.max(1, Number(entry.quantity ?? entry.qty ?? 1)),
         image: product.foto || product.image || '/assets/seed-images/placeholder.svg',
         category: product.kategori || product.category || 'Umum',
         lokasi: itemLocation,
-        koordinat: product.koordinat ?? sellerObj?.koordinat,
-        isSold,
+        distanceLabel: distInfo?.label || null,
+        isSold: isItemSold(product),
         sellerId: sellerId ? String(sellerId) : undefined,
         sellerName:
           sellerObj?.nama ||
@@ -149,19 +164,19 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
     const spots: string[] = [];
     const webLoc = getConfiguredWebLocation(currentUser);
 
-    if (webLoc) {
+    if (webLoc && webLoc !== DEFAULT_LOCATION_ID) {
       spots.push(`Area Pilihanmu: ${webLoc}`);
     }
 
     cartItems.forEach((item) => {
-      if (item.lokasi && item.lokasi !== 'Area Kampus UNNES Sekaran') {
-        const label = `Lokasi Barang (${item.lokasi})`;
+      if (item.lokasi) {
+        const label = `Area Barang (${item.lokasi})`;
         if (!spots.includes(label)) spots.push(label);
       }
     });
 
-    DEFAULT_COD_SPOTS.forEach((spot) => {
-      if (!spots.includes(spot)) spots.push(spot);
+    UNNES_LOCATIONS.forEach((loc) => {
+      if (!spots.includes(loc.name)) spots.push(loc.name);
     });
 
     return spots;
@@ -173,22 +188,41 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
     }
   }, [availableCodSpots, selectedCodSpot]);
 
-  const activeMapCoords = useMemo(() => {
-    if (selectedCodSpot.startsWith('Lokasi Barang (')) {
-      const matchedItem = cartItems.find(
-        (it) => `Lokasi Barang (${it.lokasi})` === selectedCodSpot && it.koordinat
-      );
-      return matchedItem?.koordinat ?? null;
-    }
-    if (selectedCodSpot.startsWith('Area Pilihanmu:')) {
-      return currentUser?.koordinat ?? null;
-    }
-    return null;
-  }, [selectedCodSpot, cartItems, currentUser]);
+  const activePresetLocation = useMemo(() => {
+    const cleanName = selectedCodSpot
+      .replace(/^Area Pilihanmu:\s*/i, '')
+      .replace(/^Area Barang\s*\((.+)\)$/i, '$1')
+      .trim()
+      .toLowerCase();
+
+    return (
+      UNNES_LOCATIONS.find(
+        (loc) =>
+          loc.id.toLowerCase() === cleanName ||
+          loc.name.toLowerCase() === cleanName ||
+          loc.name.toLowerCase().includes(cleanName)
+      ) ||
+      defaultLocationObj ||
+      null
+    );
+  }, [selectedCodSpot, defaultLocationObj]);
+
+  const codDistanceLabel = useMemo(() => {
+    if (!activePresetLocation) return null;
+    const userOriginLocation = getConfiguredWebLocation(currentUser);
+    const sessionCoords = getSessionUserCoords();
+    const distInfo = estimateLocationDistance(
+      userOriginLocation,
+      activePresetLocation.name,
+      sessionCoords
+    );
+    return distInfo?.label || null;
+  }, [activePresetLocation, currentUser]);
 
   const handleUpdateQty = (cartId: string, itemId: string, delta: number) => {
     if (!currentUser) return;
-    const db = dbService.getDB() as any;
+    setFeedback(null);
+    const db = getDB() as any;
     const rawCart: any[] = db.cart || [];
 
     const updatedRawCart = rawCart
@@ -215,7 +249,8 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
 
   const handleRemoveItem = (cartId: string, itemId: string) => {
     if (!currentUser) return;
-    const db = dbService.getDB() as any;
+    setFeedback(null);
+    const db = getDB() as any;
     const rawCart: any[] = db.cart || [];
 
     const remainingCart = rawCart.filter((entry, idx) => {
@@ -242,35 +277,60 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
 
     const hasSoldItems = cartItems.some((item) => item.isSold);
     if (hasSoldItems) {
-      alert('Ada barang di keranjang yang sudah terjual. Hapus barang tersebut terlebih dahulu sebelum checkout.');
+      setFeedback({
+        type: 'error',
+        message:
+          'Ada barang di keranjang yang sudah terjual. Hapus barang tersebut terlebih dahulu sebelum checkout.',
+      });
       return;
     }
 
     setIsProcessing(true);
+    setFeedback(null);
 
     try {
+      const cleanSpot = selectedCodSpot
+        .replace(/^Area Pilihanmu:\s*/i, '')
+        .replace(/^Area Barang\s*\((.+)\)$/i, '$1')
+        .trim();
+
       const codInfo = buyerNote.trim()
-        ? `${selectedCodSpot} (Catatan: ${buyerNote.trim()})`
-        : selectedCodSpot;
+        ? `${cleanSpot} (Catatan: ${buyerNote.trim()})`
+        : cleanSpot;
+
+      const buyerName = currentUser.nama || currentUser.name || 'Mahasiswa UNNES';
 
       cartItems.forEach((item) => {
+        const orderTitle =
+          item.quantity > 1 ? `${item.title} (${item.quantity}x)` : item.title;
+
         addOrderTransaction({
           buyerId: String(currentUser.id),
-          buyerName: currentUser.nama || currentUser.name || 'Mahasiswa UNNES',
+          buyerName,
           sellerId: item.sellerId,
           sellerName: item.sellerName,
           itemId: item.itemId,
-          itemTitle: item.quantity > 1 ? `${item.title} (${item.quantity}x)` : item.title,
+          itemTitle: orderTitle,
           itemImage: item.image,
           type: item.type,
           price: item.price * item.quantity,
           barterOfferTitle: item.barterOfferTitle,
           codLocation: codInfo,
-          ...(item.koordinat ? { codCoordinates: item.koordinat } : {}),
+          lokasi_cod: codInfo,
         });
+
+        if (item.sellerId && String(item.sellerId) !== String(currentUser.id)) {
+          pushNotification({
+            userId: String(item.sellerId),
+            tipe: item.type === 'barter' ? 'barter' : 'success',
+            teks: `${buyerName} membuat pesanan untuk "${orderTitle}" dengan titik COD di ${cleanSpot}.`,
+            targetPage: 'orders',
+            targetId: item.itemId,
+          });
+        }
       });
 
-      const db = dbService.getDB() as any;
+      const db = getDB() as any;
       const otherUsersCart = (db.cart || []).filter(
         (c: any) => String(c.id_user ?? c.userId) !== String(currentUser.id)
       );
@@ -278,7 +338,6 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
 
       setCartItems([]);
       if (onCartUpdated) onCartUpdated();
-      alert('Transaksi berhasil dibuat! Silakan koordinasikan jadwal COD dengan penjual.');
       onNavigate('orders');
     } finally {
       setIsProcessing(false);
@@ -296,7 +355,7 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
           <button
             type="button"
             onClick={() => openAuthModal('login')}
-            className="w-full py-3 rounded-xl text-xs font-bold text-white touch-manipulation"
+            className="w-full min-h-[44px] py-3 rounded-xl text-xs font-bold text-white touch-manipulation active:scale-[0.99] transition-transform"
             style={{ background: 'var(--color-primary, #567257)' }}
           >
             Masuk ke Akun
@@ -311,13 +370,26 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
   const hasSoldItems = cartItems.some((item) => item.isSold);
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6">
+    <div className="max-w-5xl mx-auto px-4 py-6 pb-24 md:pb-10">
       <div className="mb-5">
         <h1 className="text-xl font-bold text-gray-900">Keranjang Saya</h1>
         <p className="text-xs text-gray-500">
           Periksa kembali daftar barang dan titik lokasi COD di sekitar kampus sebelum checkout
         </p>
       </div>
+
+      {feedback && (
+        <div
+          role="alert"
+          className={`mb-4 rounded-xl px-4 py-3 text-xs font-medium border ${
+            feedback.type === 'error'
+              ? 'bg-red-50 text-red-700 border-red-200'
+              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+          }`}
+        >
+          {feedback.message}
+        </div>
+      )}
 
       {cartItems.length === 0 ? (
         <div className="bg-white rounded-2xl p-10 text-center border border-gray-100 shadow-sm">
@@ -338,7 +410,7 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
           <button
             type="button"
             onClick={() => onNavigate('home')}
-            className="px-5 py-2.5 rounded-xl text-xs font-bold text-white touch-manipulation"
+            className="min-h-[44px] px-5 py-2.5 rounded-xl text-xs font-bold text-white touch-manipulation active:scale-[0.99] transition-transform"
             style={{ background: 'var(--color-primary, #567257)' }}
           >
             Mulai Cari Barang
@@ -350,26 +422,33 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
             {cartItems.map((item) => (
               <div
                 key={item.cartId}
-                className={`bg-white rounded-2xl p-4 border shadow-sm flex gap-3.5 items-center ${
+                className={`bg-white rounded-2xl p-4 border shadow-sm flex gap-3.5 items-start sm:items-center ${
                   item.isSold ? 'border-red-200 bg-red-50/30' : 'border-gray-100'
                 }`}
               >
-                <img
-                  src={item.image}
-                  alt={item.title}
+                <button
+                  type="button"
                   onClick={() => onNavigate('product', item.itemId)}
-                  className="w-20 h-20 rounded-xl object-cover bg-gray-100 border border-gray-200 shrink-0 cursor-pointer"
-                />
+                  aria-label={`Lihat detail ${item.title}`}
+                  className="w-20 h-20 rounded-xl overflow-hidden bg-gray-100 border border-gray-200 shrink-0 touch-manipulation focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                >
+                  <img
+                    src={item.image}
+                    alt={item.title}
+                    className="w-full h-full object-cover"
+                  />
+                </button>
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <h3
+                      <button
+                        type="button"
                         onClick={() => onNavigate('product', item.itemId)}
-                        className="text-sm font-bold text-gray-900 truncate cursor-pointer hover:underline"
+                        className="text-left text-sm font-bold text-gray-900 truncate block max-w-full hover:underline touch-manipulation"
                       >
                         {item.title}
-                      </h3>
+                      </button>
                       {item.isSold && (
                         <span className="inline-block mt-0.5 px-2 py-0.5 text-[10px] font-bold rounded bg-red-100 text-red-700">
                           Sudah Terjual
@@ -380,7 +459,7 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                       type="button"
                       onClick={() => handleRemoveItem(item.cartId, item.itemId)}
                       title="Hapus dari keranjang"
-                      className="text-xs text-red-500 hover:text-red-700 font-medium shrink-0 px-1.5 py-0.5 touch-manipulation"
+                      className="min-h-[32px] px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 rounded-lg font-medium shrink-0 touch-manipulation"
                     >
                       Hapus
                     </button>
@@ -389,9 +468,16 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                   <p className="text-xs text-gray-500 mt-0.5">
                     Penjual: {item.sellerName} • {item.category}
                   </p>
-                  <p className="text-[11px] text-emerald-700 font-medium mt-0.5">
-                    Lokasi: {item.lokasi}
-                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                    <span className="text-[11px] text-emerald-700 font-medium">
+                      Area: {item.lokasi}
+                    </span>
+                    {item.distanceLabel && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        Estimasi jarak {item.distanceLabel}
+                      </span>
+                    )}
+                  </div>
 
                   <div className="flex items-center justify-between gap-2 mt-3 flex-wrap">
                     <p className="text-sm font-bold text-gray-900 whitespace-nowrap">
@@ -401,21 +487,23 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                     </p>
 
                     {!item.isSold && (
-                      <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1">
+                      <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-xl p-1">
                         <button
                           type="button"
                           onClick={() => handleUpdateQty(item.cartId, item.itemId, -1)}
-                          className="w-6 h-6 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-200 rounded touch-manipulation"
+                          aria-label="Kurangi jumlah"
+                          className="w-8 h-8 flex items-center justify-center text-gray-700 font-bold hover:bg-gray-200 active:bg-gray-300 rounded-lg touch-manipulation"
                         >
                           -
                         </button>
-                        <span className="text-xs font-bold text-gray-800 w-5 text-center">
+                        <span className="text-xs font-bold text-gray-800 w-6 text-center select-none">
                           {item.quantity}
                         </span>
                         <button
                           type="button"
                           onClick={() => handleUpdateQty(item.cartId, item.itemId, 1)}
-                          className="w-6 h-6 flex items-center justify-center text-gray-600 font-bold hover:bg-gray-200 rounded touch-manipulation"
+                          aria-label="Tambah jumlah"
+                          className="w-8 h-8 flex items-center justify-center text-gray-700 font-bold hover:bg-gray-200 active:bg-gray-300 rounded-lg touch-manipulation"
                         >
                           +
                         </button>
@@ -433,13 +521,17 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
             </h2>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-                Titik Temu COD (Berdasarkan Lokasi Barang & Kampus)
+              <label
+                htmlFor="cod-spot-select"
+                className="block text-xs font-semibold text-gray-700 mb-1.5"
+              >
+                Titik Temu COD (Area Preset Kampus)
               </label>
               <select
+                id="cod-spot-select"
                 value={selectedCodSpot}
                 onChange={(e) => setSelectedCodSpot(e.target.value)}
-                className="w-full px-3 py-2.5 text-xs rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-emerald-600"
+                className="w-full min-h-[42px] px-3 py-2.5 text-xs rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-emerald-600"
               >
                 {availableCodSpots.map((spot) => (
                   <option key={spot} value={spot}>
@@ -447,24 +539,37 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
                   </option>
                 ))}
               </select>
+              {codDistanceLabel && (
+                <p className="text-[11px] text-emerald-700 font-medium mt-1.5">
+                  Prediksi jarak ke titik COD: <span className="font-bold">{codDistanceLabel}</span>
+                </p>
+              )}
             </div>
 
             <OsmMapEmbed
-              locationName={selectedCodSpot}
-              coordinates={activeMapCoords}
+              locationName={activePresetLocation?.name || selectedCodSpot}
+              coordinates={
+                activePresetLocation
+                  ? { lat: activePresetLocation.lat, lng: activePresetLocation.lng }
+                  : null
+              }
               height={165}
             />
 
             <div>
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+              <label
+                htmlFor="cod-buyer-note"
+                className="block text-xs font-semibold text-gray-700 mb-1.5"
+              >
                 Catatan Waktu / Detail Lokasi (Opsional)
               </label>
               <input
+                id="cod-buyer-note"
                 type="text"
                 value={buyerNote}
                 onChange={(e) => setBuyerNote(e.target.value)}
                 placeholder="Misal: Ketemu jam 4 sore depan lobi"
-                className="w-full px-3 py-2 text-xs rounded-xl border border-gray-200 focus:outline-none focus:border-emerald-600"
+                className="w-full min-h-[42px] px-3 py-2 text-xs rounded-xl border border-gray-200 focus:outline-none focus:border-emerald-600"
               />
             </div>
 
@@ -495,7 +600,7 @@ export default function CartPage({ onNavigate, onCartUpdated }: CartPageProps) {
               type="button"
               onClick={handleCheckout}
               disabled={isProcessing || hasSoldItems}
-              className="w-full py-3 rounded-xl text-xs font-bold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50 touch-manipulation"
+              className="w-full min-h-[46px] py-3 rounded-xl text-xs font-bold text-white shadow-sm transition-all hover:opacity-90 active:scale-[0.99] disabled:opacity-50 touch-manipulation"
               style={{ background: 'var(--color-primary, #567257)' }}
             >
               {isProcessing ? 'Memproses...' : `Checkout Sekarang (${totalCount})`}

@@ -1,15 +1,31 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getDB, markNotificationsRead } from '../services/db';
-import { Notification } from '../types/database';
+import { Notification, PageName } from '../types/database';
 import { APP_NAME, APP_LOGO_LETTER } from '../constants/brand';
+import { NavigateFunction } from '../App';
 
 interface HeaderProps {
   activePage: string;
-  onNavigate: (page: string, params?: any) => void;
+  onNavigate: NavigateFunction;
   onOpenAddItem: () => void;
   cartCount?: number;
 }
+
+const VALID_PAGES: PageName[] = [
+  'home',
+  'product',
+  'barter',
+  'chat',
+  'admin',
+  'my-items',
+  'category',
+  'search',
+  'cart',
+  'profile',
+  'orders',
+  'info',
+];
 
 const popularSearches = [
   'Laptop Lenovo',
@@ -38,20 +54,24 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
   const [search, setSearch] = useState('');
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [avatarError, setAvatarError] = useState(false);
   const [, setDbTick] = useState(0);
 
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const desktopNotifRef = useRef<HTMLDivElement>(null);
   const mobileNotifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
 
-  // Dengarkan perubahan DB lokal/server agar badge notifikasi & keranjang langsung ter-update
+  useEffect(() => {
+    setAvatarError(false);
+  }, [currentUser?.foto_profil]);
+
   useEffect(() => {
     const bump = () => setDbTick((n) => n + 1);
     window.addEventListener('rev-db-updated', bump);
     return () => window.removeEventListener('rev-db-updated', bump);
   }, []);
 
-  // Tutup panel notifikasi & profil saat klik di luar atau menekan Escape
   useEffect(() => {
     if (!notifOpen && !profileOpen) return;
 
@@ -107,6 +127,8 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
     if (!q) return;
     setNotifOpen(false);
     setProfileOpen(false);
+    setSearch('');
+    searchInputRef.current?.blur();
     onNavigate('search', { searchQuery: q });
   };
 
@@ -116,12 +138,20 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
     }
     setNotifOpen(false);
 
-    if (n.link_page === 'chat' || n.tipe === 'chat' || n.tipe === 'barter') {
-      onNavigate('chat', n.target_id ? { conversationId: n.target_id } : undefined);
-    } else if (n.link_page === 'orders' || n.tipe === 'order' || n.tipe === 'success') {
+    const rawPage = String(n.targetPage || n.link_page || '');
+    const targetId = n.targetId || n.target_id;
+    const notifType = String(n.tipe);
+
+    if (rawPage === 'chat' || notifType === 'chat' || notifType === 'barter') {
+      onNavigate('chat', targetId ? { conversationId: targetId } : undefined);
+    } else if (rawPage === 'orders' || notifType === 'order' || notifType === 'success') {
       onNavigate('orders');
-    } else if (n.link_page === 'my-items') {
-      onNavigate('my-items');
+    } else if (rawPage === 'product' && targetId) {
+      onNavigate('product', { productId: targetId });
+    } else if (VALID_PAGES.includes(rawPage as PageName)) {
+      onNavigate(rawPage as PageName);
+    } else {
+      onNavigate('home');
     }
   };
 
@@ -130,11 +160,30 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
     markNotificationsRead(currentUser.id);
   };
 
+  const renderUserAvatar = (sizeClass = 'w-7 h-7') => {
+    if (!currentUser) return null;
+    const initial = (currentUser.nama || 'U').trim().charAt(0).toUpperCase();
+    return (
+      <div className={`${sizeClass} rounded-full overflow-hidden border-2 border-white/60 bg-white/20 shrink-0 flex items-center justify-center`}>
+        {currentUser.foto_profil && !avatarError ? (
+          <img
+            src={currentUser.foto_profil}
+            alt={currentUser.nama}
+            onError={() => setAvatarError(true)}
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <span className="text-xs font-bold text-white">{initial}</span>
+        )}
+      </div>
+    );
+  };
+
   const renderNotificationDropdown = (alignClass = 'right-0') => (
     <div
       role="dialog"
       aria-label="Daftar Notifikasi"
-      className={`absolute ${alignClass} top-12 w-80 max-w-[90vw] rounded-xl shadow-2xl border z-50 overflow-hidden`}
+      className={`absolute ${alignClass} top-11 w-80 max-w-[90vw] rounded-xl shadow-2xl border z-50 overflow-hidden`}
       style={{ background: 'var(--color-card)', borderColor: 'var(--color-border)' }}
     >
       <div
@@ -165,55 +214,58 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
             Belum ada notifikasi baru. Aktivitas chat, tawaran barter, dan status pesanan akan muncul di sini.
           </div>
         ) : (
-          userNotifications.map((n) => (
-            <button
-              type="button"
-              key={n.id}
-              onClick={() => handleNotificationClick(n)}
-              className={`w-full text-left p-3 flex items-start gap-2.5 hover:bg-black/5 active:bg-black/10 transition-colors touch-manipulation ${
-                !n.sudah_dibaca ? 'bg-[#567257]/10' : ''
-              }`}
-            >
-              <div
-                className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
-                style={{
-                  background:
-                    n.tipe === 'barter'
-                      ? '#e07b3915'
-                      : n.tipe === 'chat'
-                      ? '#56725715'
-                      : '#4a8c5c15',
-                  color:
-                    n.tipe === 'barter'
-                      ? 'var(--color-accent)'
-                      : n.tipe === 'chat'
-                      ? 'var(--color-primary)'
-                      : '#4a8c5c',
-                }}
+          userNotifications.map((n) => {
+            const notifType = String(n.tipe);
+            return (
+              <button
+                type="button"
+                key={n.id}
+                onClick={() => handleNotificationClick(n)}
+                className={`w-full text-left p-3 flex items-start gap-2.5 hover:bg-black/5 active:bg-black/10 transition-colors touch-manipulation ${
+                  !n.sudah_dibaca ? 'bg-[#567257]/10' : ''
+                }`}
               >
-                {n.tipe === 'barter' && (
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                  </svg>
-                )}
-                {n.tipe === 'chat' && (
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                  </svg>
-                )}
-                {(n.tipe === 'success' || n.tipe === 'order') && (
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs text-gray-800 leading-snug">{n.teks}</p>
-                <span className="text-[10px] text-gray-400 mt-0.5 block">{formatNotifTime(n.waktu)}</span>
-              </div>
-              {!n.sudah_dibaca && <span className="w-2 h-2 rounded-full bg-[#e07b39] shrink-0 mt-1.5" />}
-            </button>
-          ))
+                <div
+                  className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5"
+                  style={{
+                    background:
+                      notifType === 'barter'
+                        ? '#e07b3915'
+                        : notifType === 'chat'
+                        ? '#56725715'
+                        : '#4a8c5c15',
+                    color:
+                      notifType === 'barter'
+                        ? 'var(--color-accent)'
+                        : notifType === 'chat'
+                        ? 'var(--color-primary)'
+                        : '#4a8c5c',
+                  }}
+                >
+                  {notifType === 'barter' && (
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                    </svg>
+                  )}
+                  {notifType === 'chat' && (
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                    </svg>
+                  )}
+                  {(notifType === 'success' || notifType === 'order') && (
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-gray-800 leading-snug">{n.teks}</p>
+                  <span className="text-[10px] text-gray-400 mt-0.5 block">{formatNotifTime(n.waktu)}</span>
+                </div>
+                {!n.sudah_dibaca && <span className="w-2 h-2 rounded-full bg-[#e07b39] shrink-0 mt-1.5" />}
+              </button>
+            );
+          })
         )}
       </div>
     </div>
@@ -222,13 +274,13 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
   return (
     <header className="sticky top-0 z-40 shadow-md" style={{ background: 'var(--color-primary)' }}>
       {/* Top bar */}
-      <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-3">
+      <div className="max-w-screen-xl mx-auto px-2.5 sm:px-4 py-2.5 sm:py-3 flex items-center gap-1.5 sm:gap-3">
         {/* Logo */}
         <button
           type="button"
           onClick={() => onNavigate('home')}
           title={`${APP_NAME} Beranda`}
-          className="w-10 h-10 rounded-xl flex items-center justify-center text-xl font-black shadow-sm shrink-0 hover:opacity-90 transition-transform active:scale-95 touch-manipulation"
+          className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center text-lg sm:text-xl font-black shadow-sm shrink-0 hover:opacity-90 transition-transform active:scale-95 touch-manipulation"
           style={{ background: 'var(--color-bg)', color: 'var(--color-primary)' }}
         >
           {APP_LOGO_LETTER}
@@ -258,6 +310,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
         <div className="flex-1 min-w-0 relative">
           <div className="flex rounded-xl overflow-hidden shadow-sm">
             <input
+              ref={searchInputRef}
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -268,13 +321,13 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                 }
               }}
               placeholder="Cari barang, buku, elektronik..."
-              className="w-full min-w-0 px-3 sm:px-4 py-2.5 text-sm outline-none"
+              className="w-full min-w-0 px-2.5 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm outline-none"
               style={{ background: '#fffdf8', color: 'var(--color-text)', fontFamily: 'var(--font-body)' }}
             />
             <button
               type="button"
               onClick={() => handlePerformSearch()}
-              className="px-3.5 sm:px-6 py-2.5 text-white font-semibold text-xs sm:text-sm transition-opacity hover:opacity-90 shrink-0 cursor-pointer touch-manipulation"
+              className="px-2.5 sm:px-6 py-2 sm:py-2.5 text-white font-semibold text-xs sm:text-sm transition-opacity hover:opacity-90 shrink-0 cursor-pointer touch-manipulation"
               style={{ background: 'var(--color-accent)', fontFamily: 'var(--font-body)' }}
             >
               Cari
@@ -282,8 +335,33 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
           </div>
         </div>
 
-        {/* Pintasan Mobile: Notifikasi + Smart Barter */}
-        <div className="flex md:hidden items-center gap-1.5 shrink-0">
+        {/* Pintasan Mobile: Keranjang, Notifikasi, Profil/Masuk */}
+        <div className="flex md:hidden items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => onNavigate('cart')}
+            aria-label="Keranjang"
+            className="relative w-9 h-9 rounded-xl flex items-center justify-center text-white transition-all active:scale-95 touch-manipulation"
+            style={{ background: 'rgba(255, 255, 255, 0.14)' }}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
+              />
+            </svg>
+            {computedCartCount > 0 && (
+              <span
+                className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full text-[9px] font-bold flex items-center justify-center shadow"
+                style={{ background: 'var(--color-accent)', color: 'white' }}
+              >
+                {computedCartCount}
+              </span>
+            )}
+          </button>
+
           <div className="relative" ref={mobileNotifRef}>
             <button
               type="button"
@@ -292,12 +370,12 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                 setNotifOpen((prev) => !prev);
               }}
               aria-label="Notifikasi"
-              className="relative w-10 h-10 rounded-xl flex items-center justify-center text-white transition-all active:scale-95 touch-manipulation"
+              className="relative w-9 h-9 rounded-xl flex items-center justify-center text-white transition-all active:scale-95 touch-manipulation"
               style={{
                 background: notifOpen ? 'rgba(255, 255, 255, 0.25)' : 'rgba(255, 255, 255, 0.14)',
               }}
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -314,20 +392,29 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                 </span>
               )}
             </button>
-            {notifOpen && renderNotificationDropdown('right-0')}
+            {notifOpen && renderNotificationDropdown('-right-10')}
           </div>
 
-          <button
-            type="button"
-            onClick={() => onNavigate('barter')}
-            className="h-10 px-2.5 rounded-xl text-[11px] font-bold text-white transition-all active:scale-95 shrink-0 shadow-sm touch-manipulation"
-            style={{
-              background: activePage === 'barter' ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.18)',
-              border: '1px solid rgba(255, 255, 255, 0.25)',
-            }}
-          >
-            Barter
-          </button>
+          {!currentUser ? (
+            <button
+              type="button"
+              onClick={() => openAuthModal('login')}
+              className="h-9 px-2.5 rounded-xl text-[11px] font-bold text-white shadow-sm active:scale-95 touch-manipulation"
+              style={{ background: 'var(--color-accent)' }}
+            >
+              Masuk
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onNavigate(currentUser.role === 'admin' ? 'admin' : 'profile')}
+              aria-label="Profil Saya"
+              className="w-9 h-9 rounded-xl flex items-center justify-center active:scale-95 touch-manipulation"
+              style={{ background: 'rgba(255, 255, 255, 0.14)' }}
+            >
+              {renderUserAvatar('w-6 h-6')}
+            </button>
+          )}
         </div>
 
         {/* Smart Barter Button Desktop */}
@@ -443,13 +530,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                 }}
                 className="flex items-center gap-2 hover:opacity-90 transition-opacity focus:outline-none cursor-pointer touch-manipulation"
               >
-                <div className="w-7 h-7 rounded-full overflow-hidden border-2 border-white/60 bg-white/20 shrink-0">
-                  <img
-                    src={currentUser.foto_profil}
-                    alt={currentUser.nama}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
+                {renderUserAvatar('w-7 h-7')}
                 <span className="text-xs font-semibold text-white max-w-[110px] truncate hidden sm:inline">
                   {currentUser.nama.split(' ')[0]}
                 </span>
@@ -473,9 +554,11 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
                       )}
                     </div>
                     <p className="text-[10px] text-gray-500 truncate">{currentUser.email}</p>
-                    <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-[#567257]/15 text-[#567257]">
-                      {currentUser.lokasi}
-                    </span>
+                    {currentUser.lokasi && (
+                      <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-[#567257]/15 text-[#567257]">
+                        {currentUser.lokasi}
+                      </span>
+                    )}
                   </div>
                   <div className="py-1 text-xs text-gray-700 divide-y divide-gray-100">
                     <div>
@@ -582,10 +665,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
               <button
                 type="button"
                 key={item}
-                onClick={() => {
-                  setSearch(item);
-                  handlePerformSearch(item);
-                }}
+                onClick={() => handlePerformSearch(item)}
                 className="px-3 py-1 rounded-full text-xs font-normal text-white/90 whitespace-nowrap transition-all hover:bg-white/20 hover:text-white cursor-pointer touch-manipulation"
                 style={{
                   background: 'rgba(255,255,255,0.12)',
@@ -601,7 +681,7 @@ export default function Header({ activePage, onNavigate, onOpenAddItem, cartCoun
             <button
               type="button"
               onClick={() => onNavigate('chat')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-90 shadow-sm touch-manipulation"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all hover:opacity-90 shadow-sm touch-manipulation min-h-[34px]"
               style={{
                 background: activePage === 'chat' ? '#c8682a' : 'var(--color-accent)',
                 color: 'white',
